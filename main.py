@@ -14,4 +14,8 @@ args = parser.parse_args()
 if args.list_formats:
     list_formats(args.url)
 else:
-    download(args.url, resolution=args.resolution, output_dir=args.output)
+    try:
+        download(args.url, resolution=args.resolution, output_dir=args.output)
+    except RuntimeError as e:
+        print(f"\n下载失败: {e}")
+        exit(1)

@@ -27,7 +27,10 @@ print(f"\n配置:  质量=best  输出={output}  代理={proxy_val}")
 # 3. 确认并下载（直接回车即开始）
 confirm = input("\n开始下载? [Y/n]: ").strip().lower()
 if confirm != "n":
-    download(url, resolution="best", output_dir=output, proxy=proxy)
-    print("\n下载完成!")
+    try:
+        download(url, resolution="best", output_dir=output, proxy=proxy)
+        print("\n下载完成!")
+    except RuntimeError as e:
+        print(f"\n下载失败: {e}")
 else:
     print("已取消")
