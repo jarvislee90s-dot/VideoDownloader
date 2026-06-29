@@ -247,14 +247,18 @@ def list_formats(url: str, proxy: str = None):
     return info
 
 
-def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = DEFAULT_OUTPUT_DIR, proxy: str = None):
-    """下载视频，resolution 为 'best'/'1080p'/'720p' 等，默认 best 质量"""
+def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = DEFAULT_OUTPUT_DIR, proxy: str = None, on_progress=None):
+    """下载视频。
+
+    on_progress: 可选回调，签名为 on_progress(percent: float, speed: float, eta: float)。
+                 percent 为 0-100。供队列 worker 透传进度用。不传则忽略。
+    提取失败时抛 RuntimeError，便于调用方捕获。
+    """
     effective_proxy = _get_proxy_for_url(url, proxy)
     if _is_91nt_url(url):
         title, video_url = _extract_91nt_video_url(url, effective_proxy)
         if not video_url:
-            print("错误：无法从该页面提取视频地址")
-            return
+            raise RuntimeError("无法从该页面提取视频地址")
         download_url = video_url
         safe_title = re.sub(r'[<>:"/\\|?*]', '_', title or 'video')
         outtmpl = os.path.join(output_dir, f"{safe_title}.%(ext)s")
@@ -268,6 +272,16 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
     os.makedirs(output_dir, exist_ok=True)
     print(f"\n正在下载: {title or '视频'}")
 
+    console_hook = _make_progress_hook()
+
+    def _forward_hook(d):
+        console_hook(d)  # 保留原有的控制台打印（10秒节流正常工作）
+        if on_progress and d['status'] == 'downloading':
+            total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
+            downloaded = d.get('downloaded_bytes', 0)
+            percent = (downloaded / total_bytes * 100) if total_bytes else 0
+            on_progress(percent, d.get('speed') or 0, d.get('eta') or 0)
+
     ydl_opts = {
         "format": fmt,
         "outtmpl": outtmpl,
@@ -277,7 +291,7 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
         "no_warnings": True,
         "no_progress": True,
         "logger": _NoopLogger(),
-        "progress_hooks": [_make_progress_hook()],
+        "progress_hooks": [_forward_hook],
         # 91nt 的 HLS 是 AES-128 加密 TS 分片列表，分片多且经代理拉取易抖动。
         # 单线程顺序下载分片，规避 yt-dlp 并发下载时 .part 重命名竞态
         # （该竞态会导致 "fragment not found" → 跳过片段 → 最终 "downloaded file is empty"）。
