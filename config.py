@@ -20,3 +20,10 @@ DEFAULT_PROXY = None
 SITE_PROXY_MAP = {
     "91nt.com": "http://127.0.0.1:29290",
 }
+
+
+# ---- 下载队列（网页前端）配置 ----
+QUEUE_FILE = "queue.json"          # 队列持久化文件（相对于脚本目录解析）
+MAX_RETRIES = 3                    # 单任务最大自动重试次数
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 5000                 # 被占用时自动递增到 5001、5002...
