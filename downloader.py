@@ -247,11 +247,13 @@ def list_formats(url: str, proxy: str = None):
     return info
 
 
-def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = DEFAULT_OUTPUT_DIR, proxy: str = None, on_progress=None):
+def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = DEFAULT_OUTPUT_DIR, proxy: str = None, on_progress=None, on_title=None):
     """下载视频。
 
     on_progress: 可选回调，签名为 on_progress(percent: float, speed: float, eta: float)。
                  percent 为 0-100。供队列 worker 透传进度用。不传则忽略。
+    on_title: 可选回调，签名为 on_title(title: str)。在得知视频标题后立即调用一次，
+              让队列在下载过程中就显示视频名（而不是链接）。不传则忽略。
     提取失败时抛 RuntimeError，便于调用方捕获。
     """
     effective_proxy = _get_proxy_for_url(url, proxy)
@@ -263,6 +265,9 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
         safe_title = re.sub(r'[<>:"/\\|?*]', '_', title or 'video')
         outtmpl = os.path.join(output_dir, f"{safe_title}.%(ext)s")
         fmt = "best"
+        # 91nt 标题在下载前已知，立即通知队列显示视频名
+        if on_title and title:
+            on_title(title)
     else:
         download_url = url
         outtmpl = os.path.join(output_dir, "%(title)s.%(ext)s")
@@ -310,13 +315,17 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         if title is None:
-            # 非 91nt 站点：用 extract_info(download=True) 一次性下载并取回标题，
-            # 让队列能记录原始视频名（此前 title 为 None，队列里只显示“视频”）。
-            info = ydl.extract_info(download_url, download=True)
-            if isinstance(info, dict):
-                title = info.get("title") or title
-        else:
-            ydl.download([download_url])
+            # 非 91nt 站点：先取一次元数据拿标题，下载前就通知队列显示视频名，
+            # 再实际下载。取元数据失败则忽略（保持旧的“下载完才有名”回退）。
+            try:
+                meta = ydl.extract_info(download_url, download=False)
+                if isinstance(meta, dict) and meta.get("title"):
+                    title = meta["title"]
+                    if on_title:
+                        on_title(title)
+            except Exception:
+                pass
+        ydl.download([download_url])
 
     # yt-dlp 在处理单流 HLS fMP4 时，remux 后偶尔会残留 *.part / *.part-FragN.part /
     # *.ytdl 等临时碎片文件。下载完成后清理这些残留，只保留最终成品。

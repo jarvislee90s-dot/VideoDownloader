@@ -13,14 +13,16 @@ class _PauseRequested(Exception):
 class Worker:
     """后台线程，串行消费队列。
 
-    download_fn: 可注入，签名为 download_fn(url, on_progress=None) -> str(标题)。
+    download_fn: 可注入，签名为 download_fn(url, on_progress=None, on_title=None) -> str(标题)。
                  失败时抛异常。
+    on_change: 可选回调，队列状态变更后调用（无参），供 server 触发 SSE 推送。
     """
 
-    def __init__(self, queue_manager, download_fn, poll_interval: float = 0.5):
+    def __init__(self, queue_manager, download_fn, poll_interval: float = 0.5, on_change=None):
         self._qm = queue_manager
         self._download_fn = download_fn
         self._poll = poll_interval
+        self._on_change = on_change
         self._thread = None
         self._stop_flag = threading.Event()
         self._current_task_id = None          # 正在下载的任务 id
@@ -74,13 +76,27 @@ class Worker:
                 return
             last_save[0] = now
             self._qm.update_progress(task_id, percent, speed, eta)
+            if self._on_change:
+                self._on_change()
+
+        def on_title(title):
+            # 下载过程中得知标题，立即写入并推送，让前端显示视频名而非链接
+            self._qm.set_title(task_id, title)
+            if self._on_change:
+                self._on_change()
 
         try:
-            title = self._download_fn(task["url"], on_progress=on_progress)
+            title = self._download_fn(task["url"], on_progress=on_progress, on_title=on_title)
             self._qm.mark_done(task_id, title or "视频")
+            if self._on_change:
+                self._on_change()
         except _PauseRequested:
             self._qm.mark_paused(task_id)
+            if self._on_change:
+                self._on_change()
         except Exception as e:
             self._qm.mark_failed_retry(task_id, str(e), MAX_RETRIES)
+            if self._on_change:
+                self._on_change()
         finally:
             self._current_task_id = None

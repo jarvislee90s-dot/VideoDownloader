@@ -40,14 +40,15 @@ def _open_folder(path: str):
 def create_app():
     app = Flask(__name__, static_folder=None)
     qm = QueueManager(queue_file=_QUEUE_FILE)
-    worker = Worker(qm, download_fn=downloader.download)
-    worker.start()
 
     # 事件广播：任何队列变更后 put 一条通知，SSE 客户端据此拉取快照
     _event_q = queue.Queue()
 
     def notify():
         _event_q.put(None)  # 哨兵值，触发客户端刷新
+
+    worker = Worker(qm, download_fn=downloader.download, on_change=notify)
+    worker.start()
 
     # 包装 qm：在变更类操作后 notify。简单起见用钩子列表
     app.config["qm"] = qm

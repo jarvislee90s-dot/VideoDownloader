@@ -103,6 +103,12 @@ class QueueManager:
             self._mut(task_id, lambda t: t.update(progress=percent, speed=speed))
             self._save()
 
+    def set_title(self, task_id: str, title: str):
+        """下载过程中得知标题后立即记录，让前端显示视频名而非链接。"""
+        with self._lock:
+            self._mut(task_id, lambda t: t.update(title=title))
+            self._save()
+
     def mark_done(self, task_id: str, title: str):
         with self._lock:
             self._mut(task_id, lambda t: t.update(status="done", progress=100,
