@@ -309,7 +309,14 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
         "http_chunk_size": 1048576,
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([download_url])
+        if title is None:
+            # 非 91nt 站点：用 extract_info(download=True) 一次性下载并取回标题，
+            # 让队列能记录原始视频名（此前 title 为 None，队列里只显示“视频”）。
+            info = ydl.extract_info(download_url, download=True)
+            if isinstance(info, dict):
+                title = info.get("title") or title
+        else:
+            ydl.download([download_url])
 
     # yt-dlp 在处理单流 HLS fMP4 时，remux 后偶尔会残留 *.part / *.part-FragN.part /
     # *.ytdl 等临时碎片文件。下载完成后清理这些残留，只保留最终成品。
