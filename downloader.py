@@ -376,7 +376,14 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
                                 filesize=_filesize_of(meta))
             except Exception:
                 pass
-        ydl.download([download_url])
+        try:
+            ydl.download([download_url])
+        except yt_dlp.utils.DownloadError as e:
+            msg = str(e)
+            # 把 yt-dlp 的英文错误翻成对用户友好的中文提示，便于队列里一眼看懂。
+            if "No video formats found" in msg or "Unsupported URL" in msg:
+                raise RuntimeError("无法下载：该链接可能不是视频（如图文笔记/受地区限制/需要登录），或站点暂不支持")
+            raise RuntimeError(f"下载失败：{msg}")
 
     # yt-dlp 在处理单流 HLS fMP4 时，remux 后偶尔会残留 *.part / *.part-FragN.part /
     # *.ytdl 等临时碎片文件。下载完成后清理这些残留，只保留最终成品。
