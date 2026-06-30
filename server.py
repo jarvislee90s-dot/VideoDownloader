@@ -1,4 +1,5 @@
 import os
+import json
 import queue
 import threading
 
@@ -32,6 +33,12 @@ def create_app():
 
     def snapshot():
         return jsonify({"paused": qm.is_paused(), "tasks": qm.list_tasks()})
+
+    def snapshot_json():
+        # SSE 流在生成器里执行，已脱离请求/应用上下文，不能用 jsonify。
+        # 直接 json.dumps 构造同样的快照字符串。
+        return json.dumps({"paused": qm.is_paused(), "tasks": qm.list_tasks()},
+                          ensure_ascii=False)
 
     # ---- 任务管理 ----
     @app.post("/api/tasks")
@@ -99,13 +106,13 @@ def create_app():
     def events():
         def stream():
             # 先发一次当前快照
-            yield f"data: {snapshot().get_data(as_text=True)}\n\n"
+            yield f"data: {snapshot_json()}\n\n"
             while True:
                 try:
                     _event_q.get(timeout=15)
                 except queue.Empty:
                     pass
-                yield f"data: {snapshot().get_data(as_text=True)}\n\n"
+                yield f"data: {snapshot_json()}\n\n"
         return Response(stream(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache",
                                  "X-Accel-Buffering": "no"})

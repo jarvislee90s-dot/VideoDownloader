@@ -62,11 +62,17 @@ class Worker:
         self._qm.mark_downloading(task_id)
         self._current_task_id = task_id
         self._pause_current.clear()
+        last_save = [0.0]
 
         def on_progress(percent, speed, eta):
             # 检测单任务暂停
             if self._pause_current.is_set():
                 raise _PauseRequested()
+            # yt-dlp 进度事件频率很高，节流到每秒最多写一次（每次写都会原子落盘）
+            now = time.time()
+            if now - last_save[0] < 1.0 and percent < 99.0:
+                return
+            last_save[0] = now
             self._qm.update_progress(task_id, percent, speed, eta)
 
         try:

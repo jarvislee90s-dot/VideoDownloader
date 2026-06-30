@@ -279,7 +279,14 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
         if on_progress and d['status'] == 'downloading':
             total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
             downloaded = d.get('downloaded_bytes', 0)
-            percent = (downloaded / total_bytes * 100) if total_bytes else 0
+            if total_bytes:
+                percent = downloaded / total_bytes * 100
+            elif d.get('fragment_count'):
+                # HLS 流通常没有 total_bytes，改用分片进度
+                fi = d.get('fragment_index') or 0
+                percent = fi / d['fragment_count'] * 100
+            else:
+                percent = 0
             on_progress(percent, d.get('speed') or 0, d.get('eta') or 0)
 
     ydl_opts = {
@@ -312,3 +319,5 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
                 os.remove(os.path.join(output_dir, name))
             except OSError:
                 pass
+
+    return title
