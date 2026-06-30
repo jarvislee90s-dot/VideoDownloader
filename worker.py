@@ -13,7 +13,7 @@ class _PauseRequested(Exception):
 class Worker:
     """后台线程，串行消费队列。
 
-    download_fn: 可注入，签名为 download_fn(url, on_progress=None, on_title=None) -> str(标题)。
+    download_fn: 可注入，签名为 download_fn(url, on_progress=None, on_meta=None) -> str(标题)。
                  失败时抛异常。
     on_change: 可选回调，队列状态变更后调用（无参），供 server 触发 SSE 推送。
     """
@@ -79,14 +79,14 @@ class Worker:
             if self._on_change:
                 self._on_change()
 
-        def on_title(title):
-            # 下载过程中得知标题，立即写入并推送，让前端显示视频名而非链接
-            self._qm.set_title(task_id, title)
+        def on_meta(title=None, duration=None, filesize=None):
+            # 下载过程中得知标题/时长/总大小，立即写入并推送
+            self._qm.set_meta(task_id, title=title, duration=duration, filesize=filesize)
             if self._on_change:
                 self._on_change()
 
         try:
-            title = self._download_fn(task["url"], on_progress=on_progress, on_title=on_title)
+            title = self._download_fn(task["url"], on_progress=on_progress, on_meta=on_meta)
             self._qm.mark_done(task_id, title or "视频")
             if self._on_change:
                 self._on_change()

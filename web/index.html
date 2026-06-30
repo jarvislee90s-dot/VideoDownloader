@@ -67,6 +67,10 @@ let paused = false;
 function fmtPct(p){ return (p||0).toFixed(1)+'%'; }
 function fmtSpeed(s){ if(!s) return ''; return (s/1024).toFixed(0)+' KB/s'; }
 function fmtEta(e){ if(!e) return ''; const m=Math.round(e/60); return '剩余'+m+'分'; }
+function fmtDur(sec){ if(!sec) return ''; sec=Math.round(sec); const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60; return h>0?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`; }
+function fmtSize(b){ if(!b) return ''; const u=['B','KB','MB','GB']; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;} return b.toFixed(b<10&&i>0?1:0)+' '+u[i]; }
+// 视频「时长 · 总大小」信息行；都没有则返回空串。下载中总大小是估算值，标“约”。
+function infoMeta(t){ const parts=[]; if(t.duration) parts.push('时长 '+fmtDur(t.duration)); if(t.filesize){ const approx = t.status==='downloading' ? '约 ' : ''; parts.push('大小 '+approx+fmtSize(t.filesize)); } return parts.length?'<div class="meta">'+parts.join(' · ')+'</div>':''; }
 
 function actions(t){
   const b = (label, fn)=>`<button onclick="${fn}">${label}</button>`;
@@ -80,13 +84,13 @@ function actions(t){
 
 function renderTask(t){
   const title = t.title || t.url;
-  let body='';
+  let body=infoMeta(t);
   if(t.status==='downloading'){
     body=`<div class="progress"><div style="width:${fmtPct(t.progress)}"></div></div>
-          <div class="meta">${fmtPct(t.progress)} ${fmtSpeed(t.speed)} ${fmtEta(null)}</div>`;
+          <div class="meta">${fmtPct(t.progress)} ${fmtSpeed(t.speed)} ${fmtEta(null)}</div>`+body;
   }
   if(t.status==='failed'){
-    body=`<div class="meta">重试${t.retries}/3 ${t.error?('· '+t.error):''}</div>`;
+    body=`<div class="meta">重试${t.retries}/3 ${t.error?('· '+t.error):''}</div>`+body;
   }
   return `<div class="task">
     <div class="task-head">

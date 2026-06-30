@@ -247,13 +247,49 @@ def list_formats(url: str, proxy: str = None):
     return info
 
 
-def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = DEFAULT_OUTPUT_DIR, proxy: str = None, on_progress=None, on_title=None):
+def _probe_meta(url: str, proxy: str = None) -> dict:
+    """extract_info(download=False) 取元数据（不下载媒体），返回 dict 或 None。
+
+    用于下载前获取时长/总大小/标题，让队列在下载过程中显示这些信息。
+    HLS m3u8 的时长通常能从 EXTINF 求和得到；总大小对 HLS 常为未知（返回 None）。
+    """
+    opts = {
+        "proxy": proxy,
+        "quiet": True,
+        "no_warnings": True,
+        "no_progress": True,
+        "logger": _NoopLogger(),
+        "noplaylist": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            return ydl.extract_info(url, download=False)
+    except Exception:
+        return None
+
+
+def _filesize_of(info: dict):
+    """从 extract_info 结果里尽量取出总字节数；未知返回 None。"""
+    if not isinstance(info, dict):
+        return None
+    if info.get("filesize"):
+        return info["filesize"]
+    if info.get("filesize_approx"):
+        return info["filesize_approx"]
+    # 单流无总大小时，尝试从 formats 求和（取最大候选）
+    sizes = [f.get("filesize") or f.get("filesize_approx") for f in info.get("formats", [])]
+    sizes = [s for s in sizes if s]
+    return max(sizes) if sizes else None
+
+
+def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = DEFAULT_OUTPUT_DIR, proxy: str = None, on_progress=None, on_meta=None):
     """下载视频。
 
     on_progress: 可选回调，签名为 on_progress(percent: float, speed: float, eta: float)。
                  percent 为 0-100。供队列 worker 透传进度用。不传则忽略。
-    on_title: 可选回调，签名为 on_title(title: str)。在得知视频标题后立即调用一次，
-              让队列在下载过程中就显示视频名（而不是链接）。不传则忽略。
+    on_meta: 可选回调，签名为 on_meta(title=None, duration=None, filesize=None)。
+             在得知视频标题/时长/总大小后调用（可能多次，随信息逐步得知），
+             让队列在下载过程中就显示视频名与这些信息。不传则忽略。
     提取失败时抛 RuntimeError，便于调用方捕获。
     """
     effective_proxy = _get_proxy_for_url(url, proxy)
@@ -265,9 +301,12 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
         safe_title = re.sub(r'[<>:"/\\|?*]', '_', title or 'video')
         outtmpl = os.path.join(output_dir, f"{safe_title}.%(ext)s")
         fmt = "best"
-        # 91nt 标题在下载前已知，立即通知队列显示视频名
-        if on_title and title:
-            on_title(title)
+        # 91nt 标题下载前已知；再探测 m3u8 拿时长/总大小，一并通知队列
+        meta = _probe_meta(video_url, effective_proxy)
+        if on_meta:
+            on_meta(title=title or None,
+                    duration=(meta or {}).get("duration"),
+                    filesize=_filesize_of(meta))
     else:
         download_url = url
         outtmpl = os.path.join(output_dir, "%(title)s.%(ext)s")
@@ -278,21 +317,32 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
     print(f"\n正在下载: {title or '视频'}")
 
     console_hook = _make_progress_hook()
+    pushed_size = [None]  # 已推送过的总大小估算，用于节流避免抖动
 
     def _forward_hook(d):
         console_hook(d)  # 保留原有的控制台打印（10秒节流正常工作）
-        if on_progress and d['status'] == 'downloading':
+        if d['status'] == 'downloading':
             total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate')
             downloaded = d.get('downloaded_bytes', 0)
-            if total_bytes:
-                percent = downloaded / total_bytes * 100
-            elif d.get('fragment_count'):
-                # HLS 流通常没有 total_bytes，改用分片进度
-                fi = d.get('fragment_index') or 0
-                percent = fi / d['fragment_count'] * 100
-            else:
-                percent = 0
-            on_progress(percent, d.get('speed') or 0, d.get('eta') or 0)
+            frag_count = d.get('fragment_count')
+            # 百分比用 downloaded/total（与 yt-dlp 自身进度条一致，正常递增）。
+            # 注：HLS 的 fragment_index 要等整个分片下完才 +1，早期一直是 0，
+            # 不能用它算百分比（会让进度条卡在 0%），仅在没有 total 时作兜底。
+            if on_progress:
+                if total_bytes:
+                    percent = downloaded / total_bytes * 100
+                elif frag_count:
+                    percent = (d.get('fragment_index') or 0) / frag_count * 100
+                else:
+                    percent = 0
+                on_progress(percent, d.get('speed') or 0, d.get('eta') or 0)
+            # 总大小是 yt-dlp 的估算值（HLS：平均分片大小×分片数），下载初期抖动极大
+            # （会在真实值上下大幅跳动）。策略：跳过最不稳定的开头（已下载 <1MB），
+            # 取第一个较稳定的估算值后锁定，整个下载过程不再变动（前端标“约”），
+            # 下载完成后用磁盘真实大小替换为精确值。
+            if total_bytes and on_meta and pushed_size[0] is None and downloaded >= 1048576:
+                pushed_size[0] = total_bytes
+                on_meta(filesize=int(total_bytes))
 
     ydl_opts = {
         "format": fmt,
@@ -315,14 +365,15 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         if title is None:
-            # 非 91nt 站点：先取一次元数据拿标题，下载前就通知队列显示视频名，
+            # 非 91nt 站点：先取一次元数据拿标题/时长/总大小，下载前就通知队列，
             # 再实际下载。取元数据失败则忽略（保持旧的“下载完才有名”回退）。
             try:
                 meta = ydl.extract_info(download_url, download=False)
-                if isinstance(meta, dict) and meta.get("title"):
-                    title = meta["title"]
-                    if on_title:
-                        on_title(title)
+                if isinstance(meta, dict):
+                    title = meta.get("title") or title
+                    if on_meta:
+                        on_meta(title=title, duration=meta.get("duration"),
+                                filesize=_filesize_of(meta))
             except Exception:
                 pass
         ydl.download([download_url])
@@ -335,5 +386,13 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
                 os.remove(os.path.join(output_dir, name))
             except OSError:
                 pass
+
+    # 下载完成后，用磁盘上真实文件大小替换下载过程中的估算值（精确、不再抖动）。
+    # 91nt 的文件名由我们用 safe_title 控制，可直接定位；非 91nt 文件名由 yt-dlp 按
+    # %(title)s 生成，难以精确匹配，沿用估算值（直接下载的 filesize 本就精确）。
+    if on_meta and _is_91nt_url(url):
+        final_path = os.path.join(output_dir, f"{safe_title}.mp4")
+        if os.path.exists(final_path):
+            on_meta(filesize=os.path.getsize(final_path))
 
     return title

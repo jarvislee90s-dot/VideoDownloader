@@ -53,6 +53,8 @@ class QueueManager:
                 "id": secrets.token_hex(4),
                 "url": url,
                 "title": None,
+                "duration": None,
+                "filesize": None,
                 "status": "pending",
                 "progress": 0,
                 "speed": None,
@@ -103,10 +105,14 @@ class QueueManager:
             self._mut(task_id, lambda t: t.update(progress=percent, speed=speed))
             self._save()
 
-    def set_title(self, task_id: str, title: str):
-        """下载过程中得知标题后立即记录，让前端显示视频名而非链接。"""
+    def set_meta(self, task_id: str, **fields):
+        """下载过程中得知标题/时长/总大小后立即记录，让前端尽早显示。
+        只更新传入且非 None 的字段。"""
+        updates = {k: v for k, v in fields.items() if v is not None}
+        if not updates:
+            return
         with self._lock:
-            self._mut(task_id, lambda t: t.update(title=title))
+            self._mut(task_id, lambda t: t.update(updates))
             self._save()
 
     def mark_done(self, task_id: str, title: str):
