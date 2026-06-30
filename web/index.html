@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>视频下载队列</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; margin: 0; background:#f5f6f8; color:#222; }
+  .topbar { display:flex; justify-content:space-between; align-items:center;
+            background:#fff; padding:14px 20px; border-bottom:1px solid #e5e7eb; }
+  .topbar h1 { font-size:18px; margin:0; }
+  .add-row { display:flex; gap:8px; padding:16px 20px; background:#fff;
+             border-bottom:1px solid #e5e7eb; }
+  .add-row input { flex:1; padding:9px 12px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; }
+  .add-row button { padding:9px 18px; background:#2563eb; color:#fff; border:0;
+                    border-radius:6px; cursor:pointer; font-size:14px; }
+  .add-row button:hover { background:#1d4ed8; }
+  .group { padding:8px 20px; }
+  .group h3 { font-size:13px; color:#6b7280; margin:14px 0 6px; cursor:pointer; }
+  .task { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px;
+          margin-bottom:8px; display:flex; flex-direction:column; gap:6px; }
+  .task-head { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .task-title { font-size:14px; word-break:break-all; }
+  .task-actions { display:flex; gap:6px; }
+  .task-actions button { padding:4px 10px; font-size:12px; border:1px solid #d1d5db;
+                         background:#fff; border-radius:5px; cursor:pointer; }
+  .task-actions button:hover { background:#f3f4f6; }
+  .badge { font-size:12px; padding:2px 8px; border-radius:10px; white-space:nowrap; }
+  .b-downloading{ background:#dbeafe; color:#1e40af; }
+  .b-pending   { background:#e5e7eb; color:#374151; }
+  .b-paused    { background:#fef3c7; color:#92400e; }
+  .b-done      { background:#dcfce7; color:#166534; }
+  .b-failed    { background:#fee2e2; color:#991b1b; }
+  .progress { height:8px; background:#e5e7eb; border-radius:4px; overflow:hidden; }
+  .progress > div { height:100%; background:#2563eb; transition:width .3s; }
+  .meta { font-size:12px; color:#6b7280; }
+  .conn-lost { color:#dc2626; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <h1>视频下载队列</h1>
+  <div>
+    <span id="conn" class="conn-lost" style="display:none">连接中断，重连中…</span>
+    <button id="globalPause">⏸ 暂停全部</button>
+  </div>
+</div>
+<div class="add-row">
+  <input id="url" placeholder="粘贴视频链接..." />
+  <button id="addBtn">加入队列</button>
+</div>
+<div id="queue"></div>
+
+<script>
+const GROUPS = [
+  {key:'downloading', label:'下载中'},
+  {key:'pending',     label:'等待中'},
+  {key:'paused',      label:'已暂停'},
+  {key:'done',        label:'已完成'},
+  {key:'failed',      label:'失败'},
+];
+let collapsed = {done:true, failed:true};
+let paused = false;
+
+function fmtPct(p){ return (p||0).toFixed(1)+'%'; }
+function fmtSpeed(s){ if(!s) return ''; return (s/1024).toFixed(0)+' KB/s'; }
+function fmtEta(e){ if(!e) return ''; const m=Math.round(e/60); return '剩余'+m+'分'; }
+
+function actions(t){
+  const b = (label, fn)=>`<button onclick="${fn}">${label}</button>`;
+  let html='';
+  if(t.status==='downloading'||t.status==='pending') html+=b('⏸', `pause('${t.id}')`);
+  if(t.status==='paused') html+=b('▶', `resume('${t.id}')`);
+  if(t.status==='failed') html+=b('↻重试', `retry('${t.id}')`);
+  html+=b('✕', `del('${t.id}')`);
+  return html;
+}
+
+function renderTask(t){
+  const title = t.title || t.url;
+  let body='';
+  if(t.status==='downloading'){
+    body=`<div class="progress"><div style="width:${fmtPct(t.progress)}"></div></div>
+          <div class="meta">${fmtPct(t.progress)} ${fmtSpeed(t.speed)} ${fmtEta(null)}</div>`;
+  }
+  if(t.status==='failed'){
+    body=`<div class="meta">重试${t.retries}/3 ${t.error?('· '+t.error):''}</div>`;
+  }
+  return `<div class="task">
+    <div class="task-head">
+      <span class="task-title">${title}</span>
+      <span class="task-actions"><span class="badge b-${t.status}">${({downloading:'下载中',pending:'等待中',paused:'已暂停',done:'已完成',failed:'失败'})[t.status]}</span> ${actions(t)}</span>
+    </div>${body}</div>`;
+}
+
+function render(data){
+  paused = data.paused;
+  document.getElementById('globalPause').textContent = paused ? '▶ 继续' : '⏸ 暂停全部';
+  const byStatus = {};
+  GROUPS.forEach(g=>byStatus[g.key]=[]);
+  (data.tasks||[]).forEach(t=>{ if(byStatus[t.status]) byStatus[t.status].push(t); });
+  let html='';
+  GROUPS.forEach(g=>{
+    if(!byStatus[g.key].length) return;
+    const hide = collapsed[g.key];
+    html+=`<div class="group"><h3 onclick="toggle('${g.key}')">${hide?'▶':'▼'} ${g.label} (${byStatus[g.key].length})</h3>`;
+    if(!hide) byStatus[g.key].forEach(t=>html+=renderTask(t));
+    html+=`</div>`;
+  });
+  document.getElementById('queue').innerHTML = html;
+}
+
+function toggle(k){ collapsed[k]=!collapsed[k]; refreshLocal(); }
+function refreshLocal(){ /* 仅重渲染需要快照；简化：发一次 GET */ fetch('/api/tasks').then(r=>r.json()).then(render); }
+
+async function post(url, body){
+  const opt = body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{method:'POST'};
+  await fetch(url, opt);
+}
+async function pause(id){ await post('/api/tasks/'+id+'/pause'); }
+async function resume(id){ await post('/api/tasks/'+id+'/resume'); }
+async function retry(id){ await post('/api/tasks/'+id+'/retry'); }
+async function del(id){ await fetch('/api/tasks/'+id,{method:'DELETE'}); }
+
+document.getElementById('addBtn').onclick = async ()=>{
+  const url = document.getElementById('url').value.trim();
+  if(!url) return;
+  await post('/api/tasks', {url});
+  document.getElementById('url').value='';
+};
+document.getElementById('url').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('addBtn').click(); });
+document.getElementById('globalPause').onclick = ()=> post(paused?'/api/queue/resume':'/api/queue/pause');
+
+function connect(){
+  const es = new EventSource('/api/events');
+  es.onmessage = e => { render(JSON.parse(e.data)); document.getElementById('conn').style.display='none'; };
+  es.onerror = ()=>{ document.getElementById('conn').style.display='inline'; es.close(); setTimeout(connect, 2000); };
+}
+connect();
+</script>
+</body>
+</html>
