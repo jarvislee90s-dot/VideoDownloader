@@ -497,7 +497,7 @@ def test_worker_downloads_one_task_success(tmp_path):
             on_progress(50.0, 1000, 10)
         return "视频标题"
 
-    w = Worker(qm, download_fn=fake_download)
+    w = Worker(qm, download_fn=fake_download, poll_interval=0.05)
     qm.add_task("https://a")
     w.start()
     time.sleep(0.3)
@@ -514,7 +514,7 @@ def test_worker_retries_then_fails(tmp_path, monkeypatch):
     def fake_download(url, on_progress=None):
         raise RuntimeError("boom")
 
-    w = Worker(qm, download_fn=fake_download)
+    w = Worker(qm, download_fn=fake_download, poll_interval=0.05)
     qm.add_task("https://a")
     w.start()
     time.sleep(0.5)
@@ -532,7 +532,7 @@ def test_worker_skips_paused_task(tmp_path):
         calls.append(url)
         return "t"
 
-    w = Worker(qm, download_fn=fake_download)
+    w = Worker(qm, download_fn=fake_download, poll_interval=0.05)
     paused = qm.add_task("https://paused")
     qm.pause_task(paused["id"])          # 暂停的不应被取
     qm.add_task("https://b")             # 这个应该被取
@@ -553,7 +553,7 @@ def test_worker_respects_global_pause(tmp_path):
 
     qm.set_paused(True)
     qm.add_task("https://a")
-    w = Worker(qm, download_fn=fake_download)
+    w = Worker(qm, download_fn=fake_download, poll_interval=0.05)
     w.start()
     time.sleep(0.3)
     assert calls == []                   # 全局暂停，不下载
