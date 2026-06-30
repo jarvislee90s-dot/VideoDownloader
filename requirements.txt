@@ -1,2 +1,3 @@
 yt-dlp
 pycryptodomex
+flask
