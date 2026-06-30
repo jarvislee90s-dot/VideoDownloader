@@ -8,6 +8,7 @@ import urllib.request
 import urllib.parse
 import yt_dlp
 from video_downloader.config import (RESOLUTION_FORMATS, DEFAULT_RESOLUTION, DEFAULT_OUTPUT_DIR, DEFAULT_PROXY, SITE_PROXY_MAP, TARGET_SITE_DOMAIN)
+from video_downloader import bilibili
 
 
 def _get_proxy_for_url(url: str, user_proxy: str = None) -> str:
@@ -293,6 +294,31 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
     提取失败时抛 RuntimeError，便于调用方捕获。
     """
     effective_proxy = _get_proxy_for_url(url, proxy)
+
+    # B站：yt-dlp 直接请求会 412，使用 curl_cffi 绕过风控
+    if bilibili._is_bilibili_url(url):
+        os.makedirs(output_dir, exist_ok=True)
+        safe_title = re.sub(r'[<>:"/\\|?*]', '_', 'video')
+        out_path = os.path.join(output_dir, f"{safe_title}.mp4")
+        print(f"\n正在下载: B站视频")
+        try:
+            title = bilibili.download(
+                url,
+                output_path=out_path,
+                on_progress=lambda p: on_progress(p, 0, 0) if on_progress else None,
+            )
+            if title:
+                new_path = os.path.join(output_dir, f"{re.sub(r'[<>:"/\\|?*]', '_', title)}.mp4")
+                os.replace(out_path, new_path)
+                out_path = new_path
+            if on_meta:
+                on_meta(title=title)
+                if os.path.exists(out_path):
+                    on_meta(filesize=os.path.getsize(out_path))
+            return title
+        except Exception as e:
+            raise RuntimeError(f"B站下载失败：{e}")
+
     if _is_target_site_url(url):
         title, video_url = _extract_site_video_url(url, effective_proxy)
         if not video_url:

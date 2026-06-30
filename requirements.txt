@@ -1,3 +1,5 @@
 yt-dlp
 pycryptodomex
 flask
+curl_cffi
+browser_cookie3
