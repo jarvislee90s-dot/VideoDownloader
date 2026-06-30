@@ -1,7 +1,7 @@
 import threading
 import time
-from queue_manager import QueueManager
-from worker import Worker
+from video_downloader.queue_manager import QueueManager
+from video_downloader.worker import Worker
 
 
 def make(tmp_path):
@@ -31,7 +31,7 @@ def test_worker_downloads_one_task_success(tmp_path):
 
 def test_worker_retries_then_fails(tmp_path, monkeypatch):
     qm = make(tmp_path)
-    monkeypatch.setattr("worker.MAX_RETRIES", 2)  # 用小重试次数加速测试
+    monkeypatch.setattr("video_downloader.worker.MAX_RETRIES", 2)  # 用小重试次数加速测试
 
     def fake_download(url, on_progress=None, on_meta=None):
         raise RuntimeError("boom")

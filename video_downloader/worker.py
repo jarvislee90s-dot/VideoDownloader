@@ -2,7 +2,7 @@ import threading
 import time
 import traceback
 
-from config import MAX_RETRIES
+from video_downloader.config import MAX_RETRIES
 
 
 class _PauseRequested(Exception):

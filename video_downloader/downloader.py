@@ -7,7 +7,7 @@ import base64
 import urllib.request
 import urllib.parse
 import yt_dlp
-from config import RESOLUTION_FORMATS, DEFAULT_RESOLUTION, DEFAULT_OUTPUT_DIR, DEFAULT_PROXY, SITE_PROXY_MAP
+from video_downloader.config import (RESOLUTION_FORMATS, DEFAULT_RESOLUTION, DEFAULT_OUTPUT_DIR, DEFAULT_PROXY, SITE_PROXY_MAP, TARGET_SITE_DOMAIN)
 
 
 def _get_proxy_for_url(url: str, user_proxy: str = None) -> str:
@@ -60,8 +60,8 @@ def _unpack_packer(block: str) -> str:
     return re.sub(r'\b\w+\b', repl, p)
 
 
-def _extract_91nt_video_url(url: str, proxy: str = None) -> tuple:
-    """从 91nt.com 文章页提取视频真实地址，返回 (title, video_url)
+def _extract_site_video_url(url: str, proxy: str = None) -> tuple:
+    """从目标站点文章页提取视频真实地址，返回 (title, video_url)
 
     页面结构（2026 起）：文章正文里有一段 Dean Edwards packer，解包后 document.write
     一个 <script src="/videos/melon_detail_play.js?...">；该 JS 又是一段 packer，
@@ -96,7 +96,7 @@ def _extract_91nt_video_url(url: str, proxy: str = None) -> tuple:
     play_prefix = prefix_match.group(1)     # 如 /videos/detail_play.js?id=46780&...&u=
     token = token_match.group(1)
     t_bucket = int(time.time()) // 1000 // 1800  # 与站点一致的 30 分钟时间桶
-    play_js_url = 'https://91nt.com' + play_prefix + urllib.parse.quote(token) + f'&t={t_bucket}'
+    play_js_url = f'https://{TARGET_SITE_DOMAIN}' + play_prefix + urllib.parse.quote(token) + f'&t={t_bucket}'
 
     # 第二层 packer：解包后写入 <div class="ql-video-mse" ...>，含若干 data-* 属性。
     # 注意解包后的 JS 字面量里引号前有数量不定的转义反斜杠，data-* 值里 & 写成 &amp; 实体。
@@ -125,7 +125,7 @@ def _extract_91nt_video_url(url: str, proxy: str = None) -> tuple:
         try:
             from Cryptodome.Cipher import AES
             from Cryptodome.Util.Padding import unpad
-            api_body = _fetch_page('https://91nt.com' + data_api, proxy)
+            api_body = _fetch_page(f'https://{TARGET_SITE_DOMAIN}' + data_api, proxy)
             payload = json.loads(api_body).get('data', '')
             cipher = AES.new(key, AES.MODE_CBC, iv)
             decrypted = unpad(cipher.decrypt(base64.b64decode(payload)), AES.block_size)
@@ -141,8 +141,8 @@ def _extract_91nt_video_url(url: str, proxy: str = None) -> tuple:
     return (title, None)
 
 
-def _is_91nt_url(url: str) -> bool:
-    return '91nt.com' in url
+def _is_target_site_url(url: str) -> bool:
+    return TARGET_SITE_DOMAIN in url
 
 
 def _format_bytes(n: float) -> str:
@@ -205,8 +205,8 @@ class _NoopLogger:
 def list_formats(url: str, proxy: str = None):
     """列出网站提供的所有可用视频格式/分辨率"""
     effective_proxy = _get_proxy_for_url(url, proxy)
-    if _is_91nt_url(url):
-        title, video_url = _extract_91nt_video_url(url, effective_proxy)
+    if _is_target_site_url(url):
+        title, video_url = _extract_site_video_url(url, effective_proxy)
         print(f"\n标题: {title or '未知'}")
         if video_url:
             print(f"视频地址: {video_url}")
@@ -293,15 +293,15 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
     提取失败时抛 RuntimeError，便于调用方捕获。
     """
     effective_proxy = _get_proxy_for_url(url, proxy)
-    if _is_91nt_url(url):
-        title, video_url = _extract_91nt_video_url(url, effective_proxy)
+    if _is_target_site_url(url):
+        title, video_url = _extract_site_video_url(url, effective_proxy)
         if not video_url:
             raise RuntimeError("无法从该页面提取视频地址")
         download_url = video_url
         safe_title = re.sub(r'[<>:"/\\|?*]', '_', title or 'video')
         outtmpl = os.path.join(output_dir, f"{safe_title}.%(ext)s")
         fmt = "best"
-        # 91nt 标题下载前已知；再探测 m3u8 拿时长/总大小，一并通知队列
+        # 目标站点标题下载前已知；再探测 m3u8 拿时长/总大小，一并通知队列
         meta = _probe_meta(video_url, effective_proxy)
         if on_meta:
             on_meta(title=title or None,
@@ -354,7 +354,7 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
         "no_progress": True,
         "logger": _NoopLogger(),
         "progress_hooks": [_forward_hook],
-        # 91nt 的 HLS 是 AES-128 加密 TS 分片列表，分片多且经代理拉取易抖动。
+        # 目标站点的 HLS 是 AES-128 加密 TS 分片列表，分片多且经代理拉取易抖动。
         # 单线程顺序下载分片，规避 yt-dlp 并发下载时 .part 重命名竞态
         # （该竞态会导致 "fragment not found" → 跳过片段 → 最终 "downloaded file is empty"）。
         "concurrent_fragment_downloads": 1,
@@ -365,7 +365,7 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         if title is None:
-            # 非 91nt 站点：先取一次元数据拿标题/时长/总大小，下载前就通知队列，
+            # 通用站点：先取一次元数据拿标题/时长/总大小，下载前就通知队列，
             # 再实际下载。取元数据失败则忽略（保持旧的“下载完才有名”回退）。
             try:
                 meta = ydl.extract_info(download_url, download=False)
@@ -395,9 +395,9 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
                 pass
 
     # 下载完成后，用磁盘上真实文件大小替换下载过程中的估算值（精确、不再抖动）。
-    # 91nt 的文件名由我们用 safe_title 控制，可直接定位；非 91nt 文件名由 yt-dlp 按
+    # 目标站点的文件名由我们用 safe_title 控制，可直接定位；通用站点文件名由 yt-dlp 按
     # %(title)s 生成，难以精确匹配，沿用估算值（直接下载的 filesize 本就精确）。
-    if on_meta and _is_91nt_url(url):
+    if on_meta and _is_target_site_url(url):
         final_path = os.path.join(output_dir, f"{safe_title}.mp4")
         if os.path.exists(final_path):
             on_meta(filesize=os.path.getsize(final_path))

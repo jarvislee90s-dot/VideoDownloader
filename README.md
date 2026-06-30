@@ -4,6 +4,8 @@
 
 基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp)，自带对加密 HLS 流的解析。日常使用只需打开网页操作。
 
+![前端预览](docs/frontend-preview.png)
+
 ---
 
 ## 快速开始
@@ -14,13 +16,33 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-# 2. 启动服务（会自动打开浏览器）
+# 2. 启动网页服务（会自动打开浏览器）
 python run_server.py
 ```
 
 浏览器打开后，在输入框粘贴视频链接，点「加入队列」即可。下载完成的文件在 `downloads/` 目录。
 
 > 端口 5000 被占用时会自动递增到 5001、5002……
+
+---
+
+## 网页前端怎么用
+
+推荐日常使用方式：`python run_server.py`。
+
+页面说明：
+- **顶部输入框**：粘贴视频链接，回车或点「加入队列」。
+- **顶栏按钮**：
+  - 📂 **下载文件夹**：一键打开 `downloads/` 目录。
+  - ⏸ **暂停全部 / ▶ 继续**：控制整个队列的下载。
+- **任务卡片**：显示视频名、时长、总大小、状态、进度条。
+  - 等待中：可点击 ⏸ 暂停，或 ✕ 删除。
+  - 下载中：显示实时进度、速度，可暂停。
+  - 已暂停：点击 ▶ 继续。
+  - 失败：显示 ↻ 重试。
+- **分组折叠**：等待中 / 下载中 / 已暂停 / 已完成 / 失败 自动分组，可点击折叠。
+
+> 大小在下载中显示为「约」，因为 HLS 流没有预置总大小；下载完成后会显示磁盘上的精确大小。
 
 ---
 
@@ -50,32 +72,37 @@ python run_server.py
 
 ```
 .
-├── run_server.py        # 启动入口：起 Flask 服务 + 自动开浏览器
-├── run_interactive.py   # 终端交互入口（单次下载）
-├── main.py              # 纯命令行入口
-├── config.py            # 配置：分辨率、输出目录、代理、队列参数
-├── downloader.py        # 核心下载逻辑（yt-dlp + 加密 HLS 解析）
-├── queue_manager.py     # 队列状态机 + queue.json 持久化（线程安全）
-├── worker.py            # 后台线程：串行消费队列、处理暂停/重试/失败
-├── server.py            # Flask 路由 + SSE 实时推送
-├── web/index.html       # 单页前端（原生 JS + CSS）
-├── tests/               # pytest 单元测试（队列管理器 + worker）
-├── docs/                # 设计文档与实现计划
+├── run_server.py              # 启动入口：起 Flask 服务 + 自动开浏览器
+├── run_interactive.py         # 终端交互入口（单次下载）
+├── main.py                    # 纯命令行入口
+├── video_downloader/          # 核心包
+│   ├── __init__.py
+│   ├── app.py                 # run_server.py 的实际实现
+│   ├── cli.py                 # main.py 的实际实现
+│   ├── interactive.py         # run_interactive.py 的实际实现
+│   ├── config.py              # 配置：分辨率、输出目录、代理、队列参数
+│   ├── downloader.py          # 核心下载逻辑（yt-dlp + 加密 HLS 解析）
+│   ├── queue_manager.py       # 队列状态机 + queue.json 持久化（线程安全）
+│   ├── worker.py              # 后台线程：串行消费队列、处理暂停/重试/失败
+│   └── server.py              # Flask 路由 + SSE 实时推送
+├── web/index.html             # 单页前端（原生 JS + CSS）
+├── tests/                     # pytest 单元测试（队列管理器 + worker）
+├── docs/                      # 设计文档、实现计划、前端截图
 ├── requirements.txt
-└── downloads/           # 下载产物（git 忽略）
+└── downloads/                 # 下载产物（git 忽略）
 ```
 
-**架构：** `run_server.py` 启动 `server.py`（Flask）和后台 `worker.py` 线程；worker 串行消费 `queue_manager.py` 维护的队列，调用 `downloader.py` 下载；前端通过 SSE 接收实时进度。
+**架构：** `run_server.py` 启动 `video_downloader/server.py`（Flask）和后台 `worker.py` 线程；worker 串行消费 `queue_manager.py` 维护的队列，调用 `downloader.py` 下载；前端通过 SSE 接收实时进度。
 
 ---
 
 ## 配置
 
-在 `config.py` 里调整：
+在 `video_downloader/config.py` 里调整：
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `DEFAULT_OUTPUT_DIR` | `./downloads` | 下载输出目录（相对脚本目录解析） |
+| `DEFAULT_OUTPUT_DIR` | `./downloads` | 下载输出目录（相对项目根目录解析） |
 | `DEFAULT_RESOLUTION` | `best` | 默认分辨率 |
 | `SITE_PROXY_MAP` | 见文件 | 按站点配置代理（需要代理才能访问的站点） |
 | `MAX_RETRIES` | `3` | 单任务最大自动重试次数 |

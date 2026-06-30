@@ -1,7 +1,7 @@
 import json
 import os
 import time
-from queue_manager import QueueManager
+from video_downloader.queue_manager import QueueManager
 
 
 def make_qm(tmp_path):
@@ -10,10 +10,10 @@ def make_qm(tmp_path):
 
 def test_add_task_returns_id_and_persists(tmp_path):
     qm = make_qm(tmp_path)
-    task = qm.add_task("https://91nt.com/x")
+    task = qm.add_task("https://example.com/video/x")
     assert task["id"]
     assert task["status"] == "pending"
-    assert task["url"] == "https://91nt.com/x"
+    assert task["url"] == "https://example.com/video/x"
     assert task["retries"] == 0
     # 持久化到文件
     data = json.loads((tmp_path / "queue.json").read_text())

@@ -11,14 +11,17 @@ RESOLUTION_FORMATS = {
 DEFAULT_RESOLUTION = "best"
 DEFAULT_OUTPUT_DIR = "./downloads"
 
-# 代理设置：None = 不使用代理（Bilibili 等国内站不需要）
-# 下载 91nt.com 等被墙站点时，在交互界面或参数文件中指定代理
+# 代理设置：None = 不使用代理（国内站通常不需要）
+# 下载目标站点（境外/被墙）时，在交互界面或参数文件中指定代理
 # 格式如 "http://127.0.0.1:29290"
 DEFAULT_PROXY = None
 
+# 默认目标站点域名（代码中用于识别站点特化下载逻辑与专属代理）
+TARGET_SITE_DOMAIN = "91nt.com"
+
 # 站点专属代理配置（优先级高于 DEFAULT_PROXY）
 SITE_PROXY_MAP = {
-    "91nt.com": "http://127.0.0.1:29290",
+    TARGET_SITE_DOMAIN: "http://127.0.0.1:29290",
 }
 
 

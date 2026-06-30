@@ -1,8 +1,8 @@
-# 91nt 视频下载队列工具 实现计划
+# 视频下载队列工具 实现计划
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 在现有 91nt 下载器上增加常驻 Flask 网页前端，支持链接排队、严格串行下载、持久化队列、暂停/继续、失败重试。
+**目标：** 在现有下载器上增加常驻 Flask 网页前端，支持链接排队、严格串行下载、持久化队列、暂停/继续、失败重试。
 
 **架构：** Flask 服务（`server.py`）+ 后台 worker 线程（`worker.py`）+ 队列管理器（`queue_manager.py`，加锁 + `queue.json` 持久化）。worker 串行消费队列，调用现有 `downloader.download()`（增加 `on_progress` 回调入参）。前端单页 `web/index.html` 通过 SSE 接收实时进度。
 
@@ -54,7 +54,7 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
 
 - [ ] **步骤 2：提取失败改为抛异常**
 
-把函数体开头的 91nt 分支里：
+把函数体开头的站点特化分支里：
 
 ```python
         if not video_url:
@@ -98,7 +98,7 @@ cd /Users/jarvis/Documents/VideoDownloader
 ./.venv/bin/python -c "
 from downloader import download
 def p(a,b,c): print('cb', round(a,1), b, c)
-download('https://91nt.com/videos/vd-sbt-fb73', on_progress=p)
+download('https://example.com/videos/sample', on_progress=p)
 "
 ```
 预期：控制台同时出现原有的进度行和 `cb <percent> <speed> <eta>` 行，最终下载完成。
@@ -168,10 +168,10 @@ def make_qm(tmp_path):
 
 def test_add_task_returns_id_and_persists(tmp_path):
     qm = make_qm(tmp_path)
-    task = qm.add_task("https://91nt.com/x")
+    task = qm.add_task("https://example.com/video/x")
     assert task["id"]
     assert task["status"] == "pending"
-    assert task["url"] == "https://91nt.com/x"
+    assert task["url"] == "https://example.com/video/x"
     assert task["retries"] == 0
     # 持久化到文件
     data = json.loads((tmp_path / "queue.json").read_text())
@@ -845,7 +845,7 @@ sleep 1
 from server import create_app
 app = create_app()
 c = app.test_client()
-r = c.post('/api/tasks', json={'url':'https://91nt.com/x'})
+r = c.post('/api/tasks', json={'url':'https://example.com/video/x'})
 print('add', r.status_code, r.get_json())
 r = c.get('/api/tasks')
 print('list', r.status_code, r.get_json())
@@ -1094,7 +1094,7 @@ flask
 cd /Users/jarvis/Documents/VideoDownloader
 ./.venv/bin/python run_server.py
 ```
-预期：终端打印 `启动中... 浏览器将打开 http://127.0.0.1:5000`，1.2 秒后浏览器自动打开页面。在输入框粘贴一个真实链接 `https://91nt.com/videos/vd-sbt-fb73`，点"加入队列"，观察任务进入"下载中"、进度条推进、最终"已完成"，`downloads/` 出现 mp4。Ctrl+C 退出后重启 `run_server.py`，已完成任务仍在列表，未完成的回到"等待中"。
+预期：终端打印 `启动中... 浏览器将打开 http://127.0.0.1:5000`，1.2 秒后浏览器自动打开页面。在输入框粘贴一个真实链接 `https://example.com/videos/sample`，点"加入队列"，观察任务进入"下载中"、进度条推进、最终"已完成"，`downloads/` 出现 mp4。Ctrl+C 退出后重启 `run_server.py`，已完成任务仍在列表，未完成的回到"等待中"。
 
 - [ ] **步骤 4：Commit**
 

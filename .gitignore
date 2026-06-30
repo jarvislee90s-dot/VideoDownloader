@@ -11,3 +11,6 @@ queue.json.tmp
 
 # 系统
 .DS_Store
+
+# Playwright MCP temporary files
+.playwright-mcp/

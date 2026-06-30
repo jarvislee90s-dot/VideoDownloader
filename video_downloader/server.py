@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import queue
 import subprocess
@@ -7,20 +6,20 @@ import threading
 
 from flask import Flask, request, jsonify, Response, send_from_directory
 
-from config import SERVER_HOST, SERVER_PORT, DEFAULT_OUTPUT_DIR
-from queue_manager import QueueManager
-from worker import Worker
-import downloader
+from video_downloader import PROJECT_ROOT
+from video_downloader.config import SERVER_HOST, SERVER_PORT, DEFAULT_OUTPUT_DIR
+from video_downloader.queue_manager import QueueManager
+from video_downloader.worker import Worker
+import video_downloader.downloader as downloader
 
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_QUEUE_FILE = os.path.join(_SCRIPT_DIR, "queue.json")
+_QUEUE_FILE = os.path.join(PROJECT_ROOT, "queue.json")
 
 
 def _downloads_path():
-    """下载目录绝对路径（与 run_interactive.py 一致：相对路径基于脚本目录解析）。"""
+    """下载目录绝对路径（与 interactive 一致：相对路径基于项目根目录解析）。"""
     return os.path.normpath(
         DEFAULT_OUTPUT_DIR if os.path.isabs(DEFAULT_OUTPUT_DIR)
-        else os.path.join(_SCRIPT_DIR, DEFAULT_OUTPUT_DIR)
+        else os.path.join(PROJECT_ROOT, DEFAULT_OUTPUT_DIR)
     )
 
 
@@ -152,7 +151,7 @@ def create_app():
     # ---- 前端页面 ----
     @app.get("/")
     def index():
-        return send_from_directory(os.path.join(_SCRIPT_DIR, "web"), "index.html")
+        return send_from_directory(os.path.join(PROJECT_ROOT, "web"), "index.html")
 
     return app
 
