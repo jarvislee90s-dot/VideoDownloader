@@ -43,6 +43,7 @@
   <h1>视频下载队列</h1>
   <div>
     <span id="conn" class="conn-lost" style="display:none">连接中断，重连中…</span>
+    <button id="openFolder">📂 下载文件夹</button>
     <button id="globalPause">⏸ 暂停全部</button>
   </div>
 </div>
@@ -131,6 +132,7 @@ document.getElementById('addBtn').onclick = async ()=>{
 };
 document.getElementById('url').addEventListener('keydown', e=>{ if(e.key==='Enter') document.getElementById('addBtn').click(); });
 document.getElementById('globalPause').onclick = ()=> post(paused?'/api/queue/resume':'/api/queue/pause');
+document.getElementById('openFolder').onclick = ()=> post('/api/open-downloads');
 
 function connect(){
   const es = new EventSource('/api/events');

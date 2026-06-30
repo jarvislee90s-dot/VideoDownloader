@@ -1,17 +1,40 @@
 import os
+import sys
 import json
 import queue
+import subprocess
 import threading
 
 from flask import Flask, request, jsonify, Response, send_from_directory
 
-from config import SERVER_HOST, SERVER_PORT
+from config import SERVER_HOST, SERVER_PORT, DEFAULT_OUTPUT_DIR
 from queue_manager import QueueManager
 from worker import Worker
 import downloader
 
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _QUEUE_FILE = os.path.join(_SCRIPT_DIR, "queue.json")
+
+
+def _downloads_path():
+    """下载目录绝对路径（与 run_interactive.py 一致：相对路径基于脚本目录解析）。"""
+    return os.path.normpath(
+        DEFAULT_OUTPUT_DIR if os.path.isabs(DEFAULT_OUTPUT_DIR)
+        else os.path.join(_SCRIPT_DIR, DEFAULT_OUTPUT_DIR)
+    )
+
+
+def _open_folder(path: str):
+    """跨平台用文件管理器打开文件夹。"""
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        elif sys.platform == "win32":
+            os.startfile(path)  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except OSError:
+        pass
 
 
 def create_app():
@@ -100,6 +123,14 @@ def create_app():
     @app.get("/api/queue/state")
     def queue_state():
         return jsonify({"paused": qm.is_paused()})
+
+    # ---- 下载文件夹 ----
+    @app.post("/api/open-downloads")
+    def open_downloads():
+        path = _downloads_path()
+        os.makedirs(path, exist_ok=True)
+        _open_folder(path)
+        return jsonify({"ok": True, "path": path})
 
     # ---- SSE ----
     @app.get("/api/events")
