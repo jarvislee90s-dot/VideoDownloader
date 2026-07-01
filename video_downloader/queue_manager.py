@@ -102,7 +102,7 @@ class QueueManager:
 
     def update_progress(self, task_id: str, percent: float, speed: float, eta: float):
         with self._lock:
-            self._mut(task_id, lambda t: t.update(progress=percent, speed=speed))
+            self._mut(task_id, lambda t: t.update(progress=percent, speed=speed, eta=eta))
             self._save()
 
     def set_meta(self, task_id: str, **fields):

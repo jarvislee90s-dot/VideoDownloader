@@ -283,6 +283,47 @@ def _filesize_of(info: dict):
     return max(sizes) if sizes else None
 
 
+def prefetch_meta(url: str, proxy: str = None, on_meta=None):
+    """在任务加入队列后、开始下载前，异步获取并更新标题/时长/总大小。
+
+    让等待中的任务也能显示正确信息。失败则静默忽略，不影响后续下载。
+    """
+    if not on_meta:
+        return
+    effective_proxy = _get_proxy_for_url(url, proxy)
+
+    # B站：专用元数据获取
+    if bilibili._is_bilibili_url(url):
+        try:
+            bilibili.prefetch_meta(url, on_meta=on_meta)
+        except Exception:
+            pass
+        return
+
+    # 目标站点：从页面提取标题，再探测 m3u8 拿时长/总大小
+    if _is_target_site_url(url):
+        try:
+            title, video_url = _extract_site_video_url(url, effective_proxy)
+            if video_url:
+                meta = _probe_meta(video_url, effective_proxy)
+                on_meta(title=title or None,
+                        duration=(meta or {}).get("duration"),
+                        filesize=_filesize_of(meta))
+        except Exception:
+            pass
+        return
+
+    # 通用站点：yt-dlp 取元数据
+    try:
+        meta = _probe_meta(url, effective_proxy)
+        if isinstance(meta, dict):
+            on_meta(title=meta.get("title"),
+                    duration=meta.get("duration"),
+                    filesize=_filesize_of(meta))
+    except Exception:
+        pass
+
+
 def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = DEFAULT_OUTPUT_DIR, proxy: str = None, on_progress=None, on_meta=None):
     """下载视频。
 
@@ -305,16 +346,16 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
             title = bilibili.download(
                 url,
                 output_path=out_path,
-                on_progress=lambda p: on_progress(p, 0, 0) if on_progress else None,
+                on_progress=on_progress,
+                on_meta=on_meta,
             )
             if title:
                 new_path = os.path.join(output_dir, f"{re.sub(r'[<>:"/\\|?*]', '_', title)}.mp4")
                 os.replace(out_path, new_path)
                 out_path = new_path
-            if on_meta:
-                on_meta(title=title)
-                if os.path.exists(out_path):
-                    on_meta(filesize=os.path.getsize(out_path))
+            # 下载完成后用真实文件大小覆盖前期估算
+            if on_meta and os.path.exists(out_path):
+                on_meta(filesize=os.path.getsize(out_path))
             return title
         except Exception as e:
             raise RuntimeError(f"B站下载失败：{e}")

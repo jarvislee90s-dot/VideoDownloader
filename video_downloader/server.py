@@ -1,4 +1,6 @@
 import os
+import re
+import sys
 import json
 import queue
 import subprocess
@@ -24,7 +26,7 @@ def _downloads_path():
 
 
 def _open_folder(path: str):
-    """跨平台用文件管理器打开文件夹。"""
+    """跨平台用默认程序打开文件夹或文件。失败时打印到 stderr，便于排查。"""
     try:
         if sys.platform == "darwin":
             subprocess.Popen(["open", path])
@@ -32,13 +34,13 @@ def _open_folder(path: str):
             os.startfile(path)  # type: ignore[attr-defined]
         else:
             subprocess.Popen(["xdg-open", path])
-    except OSError:
-        pass
+    except Exception as e:
+        print(f"打开下载文件夹失败 ({path}): {e}", file=sys.stderr)
 
 
-def create_app():
+def create_app(queue_file=None):
     app = Flask(__name__, static_folder=None)
-    qm = QueueManager(queue_file=_QUEUE_FILE)
+    qm = QueueManager(queue_file=queue_file or _QUEUE_FILE)
 
     # 事件广播：任何队列变更后 put 一条通知，SSE 客户端据此拉取快照
     _event_q = queue.Queue()
@@ -70,6 +72,16 @@ def create_app():
         if not url:
             return jsonify({"error": "url 不能为空"}), 400
         task = qm.add_task(url)
+
+        # 后台异步拉取标题/时长/总大小，让等待中的任务也能正确显示
+        def _on_meta(**fields):
+            qm.set_meta(task["id"], **fields)
+            notify()
+
+        def _fetch_meta():
+            downloader.prefetch_meta(url, on_meta=_on_meta)
+
+        threading.Thread(target=_fetch_meta, daemon=True).start()
         notify()
         return jsonify(task), 201
 
@@ -129,6 +141,34 @@ def create_app():
     def open_downloads():
         path = _downloads_path()
         os.makedirs(path, exist_ok=True)
+        _open_folder(path)
+        return jsonify({"ok": True, "path": path})
+
+    # ---- 播放已完成的视频 ----
+    @app.post("/api/tasks/<task_id>/play")
+    def play_task(task_id):
+        task = qm.get(task_id)
+        if not task or task.get("status") != "done":
+            return jsonify({"error": "任务不存在或未完成"}), 400
+
+        title = task.get("title") or "video"
+        output_dir = _downloads_path()
+        if not os.path.isdir(output_dir):
+            return jsonify({"error": "下载目录不存在"}), 404
+
+        safe_title = re.sub(r'[<>\:"/\\|?*\x00-\x1f]', '_', title)
+        candidates = []
+        for name in os.listdir(output_dir):
+            lower = name.lower()
+            if lower.endswith((".mp4", ".mkv", ".webm", ".mov", ".avi")):
+                if safe_title in name or title in name:
+                    candidates.append(os.path.join(output_dir, name))
+
+        if not candidates:
+            return jsonify({"error": "未找到视频文件"}), 404
+
+        # 如果匹配到多个，取最近修改的（最可能是本次下载的）
+        path = max(candidates, key=os.path.getmtime)
         _open_folder(path)
         return jsonify({"ok": True, "path": path})
 

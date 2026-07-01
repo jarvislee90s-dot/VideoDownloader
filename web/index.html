@@ -170,6 +170,8 @@
   .icon-btn:hover{ background:#fff;color:var(--text);box-shadow:0 2px 8px rgba(15,23,42,.08); }
   .icon-btn svg{ width:14px;height:14px; }
   .icon-btn.danger:hover{ background:#fef2f2;border-color:#fecaca;color:#dc2626; }
+  .icon-btn.play{ color:#16a34a; }
+  .icon-btn.play:hover{ background:#f0fdf4;border-color:#86efac;color:#15803d; }
 
   /* empty state */
   .empty{ text-align:center;padding:60px 20px;color:var(--text-3); }
@@ -246,8 +248,8 @@ let collapsed = {done:true, failed:true};
 let paused = false;
 
 function fmtPct(p){ return (p||0).toFixed(1)+'%'; }
-function fmtSpeed(s){ if(!s) return ''; return (s/1024).toFixed(0)+' KB/s'; }
-function fmtEta(e){ if(!e) return ''; const m=Math.round(e/60); return '预计'+m+'分'; }
+function fmtSpeed(s){ if(!s) return ''; if(s>1024*1024) return (s/1024/1024).toFixed(1)+' MB/s'; return (s/1024).toFixed(0)+' KB/s'; }
+function fmtEta(e){ if(!e) return ''; const s=Math.round(e); if(s<60) return '预计'+s+'秒'; const m=Math.round(s/60); return '预计'+m+'分'; }
 function fmtDur(sec){ if(!sec) return ''; sec=Math.round(sec); const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60; return h>0?`${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${m}:${String(s).padStart(2,'0')}`; }
 function fmtSize(b){ if(!b) return ''; const u=['B','KB','MB','GB']; let i=0; while(b>=1024&&i<u.length-1){b/=1024;i++;} return b.toFixed(b<10&&i>0?1:0)+' '+u[i]; }
 
@@ -267,6 +269,7 @@ function actions(t){
   if(t.status==='downloading'||t.status==='pending') html+=`<button class="icon-btn" aria-label="暂停" onclick="pause('${t.id}')">${ICONS.pause}</button>`;
   if(t.status==='paused') html+=`<button class="icon-btn" aria-label="继续" onclick="resume('${t.id}')">${ICONS.play}</button>`;
   if(t.status==='failed') html+=`<button class="icon-btn" aria-label="重试" onclick="retry('${t.id}')">${ICONS.retry}</button>`;
+  if(t.status==='done') html+=`<button class="icon-btn play" aria-label="播放" onclick="play('${t.id}')">${ICONS.play}</button>`;
   html+=`<button class="icon-btn danger" aria-label="删除" onclick="del('${t.id}')">${ICONS.trash}</button>`;
   return html;
 }
@@ -285,7 +288,7 @@ function renderTask(t){
   let body='';
   if(t.status==='downloading'){
     body=`<div class="progress-wrap">
-      <div class="progress-info"><span>${fmtPct(t.progress)} · ${fmtSpeed(t.speed)} · ${fmtEta(null)}</span><span>${fmtPct(t.progress)}</span></div>
+      <div class="progress-info"><span>${fmtPct(t.progress)} · ${fmtSpeed(t.speed)} · ${fmtEta(t.eta)}</span><span>${fmtPct(t.progress)}</span></div>
       <div class="progress"><div style="width:${fmtPct(t.progress)}"></div></div>
     </div>`;
   }
@@ -363,6 +366,7 @@ async function pause(id){ await post('/api/tasks/'+id+'/pause'); }
 async function resume(id){ await post('/api/tasks/'+id+'/resume'); }
 async function retry(id){ await post('/api/tasks/'+id+'/retry'); }
 async function del(id){ await fetch('/api/tasks/'+id,{method:'DELETE'}); }
+async function play(id){ await post('/api/tasks/'+id+'/play'); }
 
 document.getElementById('addBtn').onclick = async ()=>{
   const url = document.getElementById('url').value.trim();
