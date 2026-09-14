@@ -1,6 +1,4 @@
 """wechat 模块单元测试：链接解析与 feed 响应解析。全部离线（网络函数不打桩不测）。"""
-import pytest
-
 from video_downloader.wechat import _is_wechat_url, _extract_short_uri
 from video_downloader.wechat import _parse_feed_response
 from video_downloader.wechat import _slugify

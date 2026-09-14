@@ -413,7 +413,6 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
                 raise RuntimeError(str(e))
             raise RuntimeError(f"微信视频号下载失败：{e}")
 
-
     # 公众号文章：内嵌 wxv 视频走 Playwright 劫持下载（签名 URL 绑定浏览器会话）
     if mp_article._is_mp_article_url(url):
         os.makedirs(output_dir, exist_ok=True)

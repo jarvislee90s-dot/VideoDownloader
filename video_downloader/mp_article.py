@@ -11,14 +11,12 @@ import re
 from pathlib import Path
 
 from video_downloader.config import WECHAT_PROFILE_DIR
-from video_downloader.wechat import WechatLoginRequired, _slugify
+from video_downloader.wechat import _slugify
 
 
 def _is_mp_article_url(url: str) -> bool:
     """匹配公众号文章页（mp.weixin.qq.com/s/... 等），排除视频号域。"""
-    if "mp.weixin.qq.com" not in url:
-        return False
-    return True
+    return "mp.weixin.qq.com" in url
 
 
 def _extract_wxv_ids(html: str) -> list[str]:
@@ -27,12 +25,12 @@ def _extract_wxv_ids(html: str) -> list[str]:
 
 
 def _download_article_videos(article_url: str, out_dir: Path, title_hint: str,
-                             on_progress=None, on_meta=None,
+                             on_meta=None,
                              max_videos: int = 20, timeout_ms: int = 120_000) -> list[Path]:
     """在 Playwright 里打开文章并劫持 mpvideo 媒体响应，把每个视频写到 out_dir。
 
-    返回落盘文件路径列表（顺序 = 拦截到媒体流的顺序）。拦截间隔超过
-    idle_ms 毫秒且至少拿到 1 个视频，或到达 max_videos/timeout 时结束。
+    返回落盘文件路径列表（顺序 = 拦截到媒体流的顺序）。连续 8 秒无新增拦截
+    且至少拿到 1 个视频，或到达 max_videos/timeout 时结束。
     """
     from playwright.sync_api import sync_playwright
 
@@ -160,9 +158,6 @@ def download(url: str, output_dir: str, on_progress=None, on_meta=None) -> list[
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     files = _download_article_videos(url, out_dir, title,
-                                     on_progress=on_progress, on_meta=on_meta,
+                                     on_meta=on_meta,
                                      max_videos=max(len(ids), 1))
     return [str(f) for f in files]
-
-
-_ = WechatLoginRequired  # 保留导入供调用方 except 引用（downloader 分支统一捕获）

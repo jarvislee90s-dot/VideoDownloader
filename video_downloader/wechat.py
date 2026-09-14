@@ -269,15 +269,12 @@ def prefetch_meta(url: str, on_meta=None) -> None:
     try:
         raw = _get_feed_info(short_uri)
         info = _parse_feed_response(raw)
-    except WechatLoginRequired:
-        return
     except Exception:
         return
     on_meta(title=info["title"], duration=info["duration"], filesize=info["filesize"])
 
 
-def download(url: str, output_path: str, on_progress=None, on_meta=None,
-             browser: str = WECHAT_COOKIE_BROWSER) -> str:
+def download(url: str, output_path: str, on_progress=None, on_meta=None) -> str:
     """下载视频号视频到 output_path，返回标题。
 
     流程：feed API 取流 → curl_cffi 下载（.part）→ 需要则 ISAAC64 解密 →
@@ -301,8 +298,6 @@ def download(url: str, output_path: str, on_progress=None, on_meta=None,
         on_meta(title=info["title"], duration=info["duration"], filesize=info["filesize"])
 
     title = info["title"] or short_uri
-    # Task 6 的 downloader 分支会用标题重命名 final 文件，这里先做安全化占位
-    safe_title = _slugify(title)
     out_dir = os.path.dirname(output_path) or "."
     os.makedirs(out_dir, exist_ok=True)
     final_path = Path(output_path)
