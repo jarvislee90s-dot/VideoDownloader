@@ -96,3 +96,44 @@ class _Isaac64:
 def isaac64_keystream(seed: int, length: int) -> bytes:
     """生成 ISAAC64 密钥流（对应 wx_channel GenerateDecryptorArray(seed, length)）。"""
     return _Isaac64(seed).generate(length)
+
+
+# ---- 加密区长度默认值（wx_channel crypto_helper.go: prefixLen = 131072）----
+DEFAULT_ENC_LEN = 131072
+
+# MP4/流媒体魔数（对齐 wx_channel looksLikeMediaHeader：前 32 字节窗口内任意 box type）
+_MEDIA_BOX_TYPES = (b"ftyp", b"styp", b"moov", b"mdat")
+
+
+def parse_key(decode_key: str) -> int:
+    """decodeKey 十进制字符串 → seed。非法输入抛 ValueError（对齐 wx_channel ParseKey）。"""
+    return int(decode_key.strip())
+
+
+def looks_like_media_header(data: bytes) -> bool:
+    """解密校验：前 32 字节窗口内出现 ftyp/styp/moov/mdat 任一即视为媒体文件。"""
+    limit = min(len(data), 32)
+    for i in range(4, limit - 3):
+        if data[i:i + 4] in _MEDIA_BOX_TYPES:
+            return True
+    return False
+
+
+def decrypt_data(data: bytes, decode_key: str, enc_len: int = DEFAULT_ENC_LEN) -> bytes | None:
+    """XOR 解密 data 的前 enc_len 字节；成功返回新 bytes，失败返回 None。
+
+    - decodeKey 非法（空/非数字）→ None（调用方决定如何报错）
+    - 解密后头部无媒体魔数 → None（视为 key 错误，保留密文由调用方处理）
+    """
+    try:
+        seed = parse_key(decode_key)
+    except (ValueError, AttributeError):
+        return None
+    enc_len = min(enc_len, len(data))
+    ks = isaac64_keystream(seed, enc_len)
+    out = bytearray(data)
+    for i in range(enc_len):
+        out[i] ^= ks[i]
+    if not looks_like_media_header(bytes(out[:32])):
+        return None
+    return bytes(out)
