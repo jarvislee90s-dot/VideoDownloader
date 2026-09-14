@@ -119,8 +119,8 @@ def looks_like_media_header(data: bytes) -> bool:
     return False
 
 
-def decrypt_data(data: bytes, decode_key: str, enc_len: int = DEFAULT_ENC_LEN) -> bytes | None:
-    """XOR 解密 data 的前 enc_len 字节；成功返回新 bytes，失败返回 None。
+def decrypt_data(data: bytes, decode_key: str, enc_len: int = DEFAULT_ENC_LEN) -> bytes | bytearray | None:
+    """XOR 解密 data 的前 enc_len 字节；成功返回新 bytes/bytearray，失败返回 None。
 
     - decodeKey 非法（空/非数字）→ None（调用方决定如何报错）
     - 解密后头部无媒体魔数 → None（视为 key 错误，保留密文由调用方处理）
@@ -129,11 +129,11 @@ def decrypt_data(data: bytes, decode_key: str, enc_len: int = DEFAULT_ENC_LEN) -
         seed = parse_key(decode_key)
     except (ValueError, AttributeError):
         return None
-    enc_len = min(enc_len, len(data))
+    enc_len = max(0, min(enc_len, len(data)))
     ks = isaac64_keystream(seed, enc_len)
     out = bytearray(data)
     for i in range(enc_len):
         out[i] ^= ks[i]
     if not looks_like_media_header(bytes(out[:32])):
         return None
-    return bytes(out)
+    return out

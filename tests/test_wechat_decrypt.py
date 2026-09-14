@@ -58,6 +58,14 @@ class TestLooksLikeMediaHeader:
     def test_too_short(self):
         assert looks_like_media_header(b"\x00\x00") is False
 
+    def test_other_box_types_and_last_window(self):
+        # styp/moov/mdat 在 offset 4 均可识别；ftyp 在 offset 28（最后一个有效窗口）也能识别
+        for box in (b"styp", b"moov", b"mdat"):
+            header = b"\x00\x00\x00\x18" + box + b"isom\x00\x00\x02\x00isomiso2"
+            assert looks_like_media_header(header) is True, box
+        tail_window = b"\x00" * 28 + b"ftyp"
+        assert looks_like_media_header(tail_window) is True
+
 
 class TestDecryptData:
     def test_roundtrip(self):
@@ -86,3 +94,11 @@ class TestDecryptData:
         garbage = bytes(range(256)) * 4  # 1KB，无 ftyp/moov 等魔数窗口
         result = decrypt_data(garbage, "1", enc_len=len(garbage))
         assert result is None
+
+    def test_short_file_with_default_enc_len(self):
+        # 文件远小于默认 enc_len(131072)：min 截断到 len(data)，roundtrip 仍成功
+        plain = b"\x00\x00\x00\x18ftypisom" + b"C" * 36
+        ks = isaac64_keystream(999, len(plain))
+        cipher = bytes(p ^ k for p, k in zip(plain, ks))
+        result = decrypt_data(cipher, "999")  # 默认 enc_len=131072
+        assert bytes(result) == plain
