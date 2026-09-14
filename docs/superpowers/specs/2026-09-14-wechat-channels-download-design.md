@@ -23,7 +23,8 @@ VideoDownloader 现支持通用站点（yt-dlp）、B站（curl_cffi 专用模�
   - `data.feedInfo.h264VideoInfo.videoUrl`、`h265VideoInfo.videoUrl`、`videoUrl`（取流优先级 h264 > videoUrl > h265）
   - `data.feedInfo.decodeKey`（**加密标记**，部分视频流加密）
   - `data.authorInfo.nickname`（作者）、`coverUrl`/`thumbUrl`（封面）
-- **加密风险（探索笔记遗漏、本设计补上）**：wx_channel `internal/assets/inject/decrypt.js` 证实部分视频流经 Isaac64 PRNG 生成 128KB 密钥流做 XOR 加密（官方 WASM：`wasm_video_decode.wasm`），密钥 seed 与接口响应 `decodeKey` 关联。不解密则下载文件无法播放
+- **加密风险（探索笔记遗漏、本设计补上）**：wx_channel `internal/assets/inject/decrypt.js` 证实部分视频流经 ISAAC64 PRNG 生成 128KB 密钥流做 XOR 加密（官方 WASM：`wasm_video_decode.wasm`），密钥 seed 与接口响应 `decodeKey` 关联。不解密则下载文件无法播放。**解密算法已有完整可翻译源码**（见下方"可抄实现对照表"）：wx_channel `pkg/util/isaac64.go`（201 行 Go，ISAAC64 完整实现）+ `internal/utils/crypto_helper.go`（`ParseKey`：decodeKey 十进制字符串直接 `ParseUint` 转 uint64 seed，无额外哈希/变换；`DecryptFileInPlace`：只解密文件头 128KB；`looksLikeMediaHeader`：解密校验 ftyp/styp/moov/mdat 四魔数）
+- **加密区长度语义**：两处源码有差异——JohnABC/WechatSphDecrypt `download.go` 用 HTTP 响应头 `X-enclen` 指定加密长度；wx_channel（2026-09 仍在更新，v5.7.9）用固定 131072（128KB）。实现时优先读 CDN 响应头 `X-enclen`，缺失则取 131072。注：wx_channel `pkg/decrypt/decrypt.go` 头部注释标明其代码源自 Hanson/WechatSphDecrypt（原 repo 已删，JohnABC fork 仍在），两份 Go 实现互为印证
 - GitHub 四大流派（res-downloader 19.8k★ MITM 代理、ltaoo/wx_channels_download 9.3k★ 代理注入微信PC、qiye45/wechatVideoDownload 5.8k★ mitmdump 监听、nobiyou/wx_channel 2.6k★ 注入微信PC）均依赖装证书或微信 PC 客户端，无一支持纯分享链接下载，故走自研接口路线
 
 ## 用户决策记录
@@ -69,8 +70,10 @@ download(url, output_path, on_progress, on_meta)
 
 ### wechat_decrypt.py 职责
 
-- `isaac64_keystream(seed: int, length: int) -> bytes`：Python 复现 Isaac64 PRNG（参考 wx_channel `decrypt.js` 的 WASM 调用语义：`WxIsaac64(seed).generate(131072)` 生成 131072 字节密钥流，`__wx_channels_video_decrypt` 对文件按块 XOR）
-- `decrypt_file(src: Path, dst: Path, decode_key: int) -> bool`：XOR 解密头部区块，返回是否成功
+逐行翻译 wx_channel `pkg/util/isaac64.go`（Go → Python，算法完全确定，无需逆向试探）：
+
+- `class Isaac64`：`randrsl[256]`、`randcnt`、`mm[256]`、`aa/bb/cc` 状态；`randinit(seed)`（golden 常量 `0x9e3779b97f4a7c13`，mix 8 变量混合，两轮 mm 填充）、`isaac64()`（`j%4` 分支的移位/取反 + `mm[(x>>3)%256]` 查表）、`generate(length)`（每轮 `randcnt--` 取 `randrsl[randcnt]`，uint64 按 8 字节小端拆分后**反转字节序**输出——这是两份 Go 源码一致的关键细节，对应 `__wx_channels_decrypt` 里 `decryptor_array.set(r.reverse())`）
+- `decrypt_file(src, dst, decode_key: str) -> bool`：`ParseKey` 语义（十进制字符串 → `int`，非法则报错）；生成 131072 字节密钥流，对文件头部 XOR（加密区长度优先取 CDN 响应头 `X-enclen`，缺失用 131072）；头部校验 `looksLikeMediaHeader` 语义（前 32 字节内出现 ftyp/styp/moov/mdat 任一即通过）
 - 纯函数无网络依赖，可用固定 seed + 已知明文做单测
 
 ### 数据流
@@ -87,6 +90,31 @@ download(url, output_path, on_progress, on_meta)
 ```
 
 文件名沿用 B站 `_slugify` 规则（非法字符替换、80 字符截断）。
+
+### 与现有代码的接口核对（自审结论）
+
+- worker 注入的 `download_fn(url, on_progress, on_meta) -> title`（`worker.py:16`）→ `downloader.download()` 签名完全匹配，wechat 分支在 `downloader.download()` 内部实现，worker 不感知
+- `on_progress(percent, speed, eta)` 高频回调由 worker 自行节流（`worker.py:73-77` 每秒一次），wechat 下载回调无需自己节流
+- `on_meta(title/duration/filesize)` 任意子集多次调用由 `queue_manager.set_meta` 支持（只更新非 None 字段，`queue_manager.py:108-116`），prefetch 阶段先给 title/duration、下载阶段再补 filesize 的时序安全
+- 队列任务失败走 `mark_failed_retry`（自动重试 3 次）→ 登录态缺失类错误会自动重试 3 次再进 failed 态，这是现有全局行为，不为本功能特判
+- browser_cookie3 已是 requirements.txt 依赖且 bilibili.py 已有 `_load_browser_cookies` 成熟实现（含 chrome/firefox/safari/edge loader 表），wechat.py 直接复用该模式
+- config.py 新增 `WECHAT_COOKIE_BROWSER = "chrome"` 与 `WECHAT_FEED_API_URL` 两个常量，命名与现有 `DEFAULT_*`/`SITE_PROXY_MAP` 风格一致
+- URL 谓词互斥性：`_is_wechat_url` 匹配 `channels.weixin.qq.com` 与 `weixin.qq.com/sph`，与 `_is_bilibili_url`（bilibili.com/b23.tv）、`TARGET_SITE_DOMAIN`（91nt.com）无交集，downloader.py 中三个分支按 B站 → wechat → 目标站点顺序检查互不干扰
+
+### 可抄实现对照表（spec 中每个方法的外部证据）
+
+| 本设计方法 | 前期探测证据 / 可抄源码 |
+|------|------|
+| `_is_wechat_url` / `_extract_short_uri` | wx_channel `internal/assets/inject/api_client.js:86-96`（shortUri 从 `/sph/` 末段或 `?id=` 提取）；本仓库 bilibili.py `_is_bilibili_url` 同构 |
+| `_get_cookies` | bilibili.py:93-114 `_load_browser_cookies` 现成实现（browser_cookie3 已在 requirements.txt） |
+| `_get_feed_info`（POST get_feed_info） | 本地实测：无登录态 401（接口存在、无签名头）；wx_channel `api_client.js:145-170` `fetchSharedFeedInfo`（body 结构、credentials:'include' 语义） |
+| 响应字段解析 | wx_channel `api_client.js:234-262` `buildSharedFeedCompatResponse`（h264/h265/videoUrl 优先级、decodeKey、durationMs、authorInfo 字段名全部来自该源码）；前端 bundle feed.408a968c.js 实测同样字段 |
+| `_slugify` | bilibili.py:21-24 现成实现，直接复用 |
+| 流下载 + 进度回调 | bilibili.py:170-208 `_download_stream`（curl_cffi stream + percent/speed/eta 回调）同构改造（加 Referer 头） |
+| `Isaac64` PRNG | wx_channel `pkg/util/isaac64.go` 全文 201 行 Go 源码（已逐行读过），算法确定可翻译 |
+| `ParseKey`（decodeKey→seed） | wx_channel `crypto_helper.go:99-104`：十进制字符串 `ParseUint` 直接转 uint64，**无额外变换**——原 spec 标注的"唯一边做边试风险点"被此源码消除 |
+| 加密区长度 | JohnABC/WechatSphDecrypt `download.go:26`（HTTP 头 `X-enclen`）与 wx_channel `crypto_helper.go:80`（固定 131072）两处证据，实现时优先 X-enclen |
+| 解密校验（ftyp） | wx_channel `crypto_helper.go:106-129` `looksLikeMediaHeader`（ftyp/styp/moov/mdat 四魔数，前 32 字节窗口） |
 
 ## 错误处理（单一降级哲学，所有信息走现有任务失败态展示）
 
@@ -108,6 +136,7 @@ download(url, output_path, on_progress, on_meta)
 
 ## 已知风险与对策
 
-1. **Isaac64 seed 转换细节**（decodeKey 字段值 → PRNG seed 的确切转换，社区仅有 WASM 黑盒语义）：全案唯一需要拿真实加密视频边做边试的点。对策：解密模块独立 + ftyp 校验 + 密文保留，失败不影响未加密视频的主路径
+1. ~~Isaac64 seed 转换细节~~ **已消除**：自审中找到 wx_channel `crypto_helper.go` `ParseKey`（decodeKey 十进制串直接转 uint64）与 `pkg/util/isaac64.go` 完整 Go 实现，解密算法从"边做边试"变为"逐行翻译"，剩余工作只是 Go→Python 语法转换 + 用已知样本回归
 2. **腾讯风控升级**：若未来校验 UA/IP 与浏览器一致性，curl_cffi 重放可能失效。对策：impersonate='chrome' + 同源暖场请求已最大化模拟；真失效时升级到内置 Playwright 持久化浏览器方案（已在需求澄清中排除为非本期，留作二期）
 3. **generalToken**：wx_channel 默认传空串可用；若实测要求非空，从页面 cookie 的 token 字段取（前端 bundle 证实 `se().token || Qa("token")` 的取值链），实现中预留该取值路径
+4. **X-enclen 与 128KB 语义差异**：老实现读响应头、新实现固定 128KB。对策：优先读 `X-enclen`，缺失回退 131072；解密校验（魔数）失败时保留密文，两种长度语义不会导致不可诊断的坏文件
