@@ -2,7 +2,7 @@
 
 一个带网页前端的视频下载工具：贴链接 → 加入队列 → 严格串行下载，支持暂停/继续、失败自动重试、实时进度。
 
-基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 与 curl_cffi，支持通用站点、加密 HLS 流以及 **B站（bilibili.com）**。日常使用只需打开网页操作。
+基于 [yt-dlp](https://github.com/yt-dlp/yt-dlp) 与 curl_cffi，支持通用站点、加密 HLS 流、**B站（bilibili.com）**以及**微信视频号（channels.weixin.qq.com）**。日常使用只需打开网页操作。
 
 ![前端预览](docs/frontend-preview.png)
 
@@ -84,6 +84,8 @@ python run_server.py
 │   ├── cli.py                 # main.py 的实际实现
 │   ├── interactive.py         # run_interactive.py 的实际实现
 │   ├── bilibili.py            # B站（bilibili.com）下载专用逻辑
+│   ├── wechat.py              # 微信视频号（channels.weixin.qq.com）下载专用逻辑
+│   ├── wechat_decrypt.py      # 视频号加密流解密（ISAAC64 + XOR）
 │   ├── config.py              # 配置：分辨率、输出目录、代理、队列参数
 │   ├── downloader.py          # 核心下载逻辑（yt-dlp + 加密 HLS 解析 + 元数据预取）
 │   ├── queue_manager.py       # 队列状态机 + queue.json 持久化（线程安全）
@@ -130,3 +132,4 @@ python -m pytest -v
 - **下载失败提示"该链接可能不是视频"**：链接本身可能不是视频（如图文笔记）、受地区限制或需要登录。
 - **进度条卡在 0% 后才开始动**：HLS 流需先解析清单（抓页面 + 解包 + 取真实地址）几秒，才开始下载并刷新进度。
 - **下载中文件大小标"约"**：HLS 清单不直接给总大小，显示的是估算值，下载完成后替换为磁盘上的精确大小。
+- **微信视频号下载失败提示"未检测到 Chrome 登录态"**：视频号需要登录态。先用 Chrome 打开 [channels.weixin.qq.com](https://channels.weixin.qq.com) 扫码登录，然后回到队列点任务的重试 ↻。登录态失效（403）时同样重新扫码即可。加密视频解密失败时会保留 `.encrypted` 密文文件，请携带链接反馈。
