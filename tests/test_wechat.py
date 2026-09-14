@@ -3,6 +3,7 @@ import pytest
 
 from video_downloader.wechat import _is_wechat_url, _extract_short_uri
 from video_downloader.wechat import _parse_feed_response
+from video_downloader.wechat import _slugify
 
 
 class TestIsWechatUrl:
@@ -116,3 +117,18 @@ class TestParseFeedResponse:
         sample = _feed_json(feed_info={"fileSize": 0})
         r = _parse_feed_response(sample)
         assert r["filesize"] is None
+
+
+class TestSlugify:
+    def test_illegal_chars_replaced(self):
+        assert _slugify('a<b>c:d"e/f\\g|h?i*j') == "a_b_c_d_e_f_g_h_i_j"
+
+    def test_truncated_to_80(self):
+        assert len(_slugify("长" * 100)) == 80
+
+    def test_empty_fallback(self):
+        assert _slugify("") == "video"
+        assert _slugify(None) == "video"
+
+    def test_collapsed_underscores(self):
+        assert _slugify("a///b___c") == "a_b_c"
