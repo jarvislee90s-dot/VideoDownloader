@@ -30,3 +30,7 @@ QUEUE_FILE = "queue.json"          # 队列持久化文件（相对于脚本目�
 MAX_RETRIES = 3                    # 单任务最大自动重试次数
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 5000                 # 被占用时自动递增到 5001、5002...
+
+# ---- 微信视频号（wechat channels）配置 ----
+WECHAT_COOKIE_BROWSER = "chrome"  # browser_cookie3 读取哪个浏览器的登录态
+WECHAT_FEED_API_URL = "https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info"
