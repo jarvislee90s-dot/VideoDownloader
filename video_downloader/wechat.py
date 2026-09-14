@@ -262,23 +262,23 @@ def download(url: str, output_path: str, on_progress=None, on_meta=None,
     final_path = Path(output_path)
     part_path = final_path.with_name(final_path.name + ".part")
 
-    # 取 X-enclen（十进制加密区长度）需轻量 HEAD；失败忽略，解密回退默认值
-    try:
-        head = cffi_requests.head(
-            info["video_url"],
-            headers={"Referer": "https://channels.weixin.qq.com/"},
-            impersonate="chrome", timeout=15,
-        )
-        enc_len = _read_x_enclen(head.headers)
-    except Exception:
-        enc_len = None
-
     try:
         _download_stream(info["video_url"], part_path, on_progress,
                          total_size=info["filesize"])
 
         # 加密流：解密 + 魔数校验；失败保留密文（.encrypted）便于诊断
         if info["decode_key"]:
+            # X-enclen（十进制加密区长度）仅加密流需要：轻量 HEAD 预检，
+            # 失败忽略，解密回退 DEFAULT_ENC_LEN
+            try:
+                head = cffi_requests.head(
+                    info["video_url"],
+                    headers={"Referer": "https://channels.weixin.qq.com/"},
+                    impersonate="chrome", timeout=15,
+                )
+                enc_len = _read_x_enclen(head.headers)
+            except Exception:
+                enc_len = None
             cipher = part_path.read_bytes()
             plain = decrypt_data(cipher, info["decode_key"],
                                  enc_len=enc_len or DEFAULT_ENC_LEN)
