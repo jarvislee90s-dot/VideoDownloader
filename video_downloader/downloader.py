@@ -377,6 +377,8 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
             if on_meta and os.path.exists(out_path):
                 on_meta(filesize=os.path.getsize(out_path))
             return title
+        # NOTE: 已知问题：worker 的 _PauseRequested 暂停异常在这里会被转成 RuntimeError，
+        # 导致 B站 任务暂停时被误记为失败。修复需在 except 中加暂停穿透判断（与 wechat 分支同法）。
         except Exception as e:
             raise RuntimeError(f"B站下载失败：{e}")
 
@@ -394,7 +396,7 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
             )
             if title:
                 new_path = os.path.join(
-                    output_dir, f"{re.sub(r'[<>:\"/\\\\|?*]', '_', title)}.mp4")
+                    output_dir, f"{re.sub(r'[<>:"/\\|?*]', '_', title)}.mp4")
                 if new_path != out_path:
                     os.replace(out_path, new_path)
                     out_path = new_path

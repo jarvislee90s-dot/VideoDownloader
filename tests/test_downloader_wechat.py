@@ -82,3 +82,17 @@ class TestDownloadDispatch:
         with pytest.raises(_PauseRequested):
             downloader.download(WECHAT_URL, output_dir=str(tmp_path),
                                 on_progress=raising_progress)
+
+    def test_real_worker_pause_passes_through(self, monkeypatch, tmp_path):
+        # 集成版：用 worker 里真实的 _PauseRequested 钉住 downloader 的
+        # type(e).__name__ == "_PauseRequested" 字符串判断——若 worker 重命名该类，
+        # 此测试会失败提醒同步更新。
+        from video_downloader.worker import _PauseRequested
+
+        def fake_download(url, output_path, on_progress=None, on_meta=None, **kw):
+            raise _PauseRequested()
+
+        monkeypatch.setattr(wechat, "download", fake_download)
+
+        with pytest.raises(_PauseRequested):
+            downloader.download(WECHAT_URL, output_dir=str(tmp_path))
