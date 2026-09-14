@@ -90,7 +90,7 @@ def _build_session() -> cffi_requests.Session:
 
 
 def _get_feed_info(short_uri: str) -> dict:
-    """POST feed API 拿视频信息。401/errCode!=0 → WechatLoginRequired（单一降级）。"""
+    """POST feed API 拿视频信息。401 → WechatLoginRequired；errCode!=0 由 _parse_feed_response 归入 error 字段。"""
     s = _build_session()
     # 同源暖场：GET 一次 finder-preview 页面，确保会话 cookies 完整
     s.get("https://channels.weixin.qq.com/finder-preview/pages/sph", timeout=30)
