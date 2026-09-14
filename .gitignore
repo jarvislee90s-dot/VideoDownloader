@@ -14,3 +14,7 @@ queue.json.tmp
 
 # Playwright MCP temporary files
 .playwright-mcp/
+
+# 微信视频号登录态（扫码 profile，含敏感 cookies）
+profile_browser/
+_profile_cookies/
