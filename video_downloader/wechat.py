@@ -192,7 +192,9 @@ def _parse_feed_response(data: dict) -> dict:
         "decode_key": feed.get("decodeKey") or "",
         "author": author.get("nickname") or None,
         "error": error,
-        # shortUri -> objectId 映射键：登录用户自己的内容可用它去工作台匹配明文直链
+        # 发布时间（秒级时间戳）：工作台 post_list 匹配自己内容的主键
+        # （dynamicExportId 每次请求都不同，不能作为匹配键）
+        "createtime": feed.get("createtime") or None,
         "dynamic_export_id": scene.get("dynamicExportId") or None,
     }
 
@@ -213,49 +215,45 @@ def _workspace_headers() -> dict:
     }
 
 
-def _find_own_media(dynamic_export_id: str, s: cffi_requests.Session,
-                    max_pages: int = 10) -> dict | None:
-    """在工作台 post_list 里按 dynamicExportId 匹配自己的内容，返回 media dict。
+def _find_own_media(createtime: int, s: cffi_requests.Session) -> dict | None:
+    """在工作台 post_list 里按发布时间（秒级时间戳）匹配自己的内容，返回 media dict。
 
     微信网页端 finder-preview 接口对多数内容不返回视频字段（仅微信内观看限制），
-    但登录用户自己发布的内容在工作台直接给明文 CDN 地址。翻页上限防死循环。
+    但登录用户自己发布的内容在工作台直接给明文 CDN 地址。
+    匹配键用 createTime：dynamicExportId 每次请求都不同（带时效签名），
+    objectId 也与分享体系不同 id，时间戳是两边唯一稳定的对应关系。
     """
-    page = 1
-    while page <= max_pages:
-        resp = s.post(
-            _WORKSPACE_POST_LIST_URL,
-            json={"orderType": 3, "pageNumber": page, "pageSize": 50},
-            headers=_workspace_headers(),
-            timeout=30,
-        )
-        if resp.status_code not in (200, 201):
-            return None
-        try:
-            items = resp.json().get("data", {}).get("list", [])
-        except ValueError:
-            return None
-        if not items:
-            return None
-        bare = dynamic_export_id.replace("export/", "")
-        for it in items:
-            oid = it.get("objectId") or ""
-            if oid == dynamic_export_id or oid == bare or oid.replace("export/", "") == bare                     or it.get("exportId") == dynamic_export_id:
-                media_list = (it.get("desc") or {}).get("media") or []
-                if media_list:
-                    m = media_list[0]
-                    def _int(v):
-                        try:
-                            return int(v)
-                        except (TypeError, ValueError):
-                            return None
+    body = {"pageSize": 50, "currentPage": 1, "userpageType": 11, "stickyOrder": False,
+            "timestamp": str(int(time.time() * 1000)), "_log_finder_uin": "",
+            "_log_finder_id": "", "rawKeyBuff": "", "pluginSessionId": None,
+            "scene": 7, "reqScene": 7}
+    resp = s.post(_WORKSPACE_POST_LIST_URL, json=body,
+                  headers=_workspace_headers(), timeout=30)
+    if resp.status_code not in (200, 201):
+        return None
+    try:
+        items = resp.json().get("data", {}).get("list", [])
+    except ValueError:
+        return None
+    for it in items:
+        if it.get("createTime") != createtime:
+            continue
+        media_list = (it.get("desc") or {}).get("media") or []
+        if media_list:
+            m = media_list[0]
 
-                    return {
-                        "url": m.get("fullUrl") or m.get("url"),
-                        "filesize": _int(m.get("fullFileSize")) or _int(m.get("fileSize")),
-                        "duration": _int(m.get("videoPlayLen")),
-                        "decode_key": m.get("decodeKey") or "",
-                    }
-        page += 1
+            def _int(v):
+                try:
+                    return int(v)
+                except (TypeError, ValueError):
+                    return None
+
+            return {
+                "url": m.get("fullUrl") or m.get("url"),
+                "filesize": _int(m.get("fullFileSize")) or _int(m.get("fileSize")),
+                "duration": _int(m.get("videoPlayLen")),
+                "decode_key": m.get("decodeKey") or "",
+            }
     return None
 
 
@@ -356,15 +354,11 @@ def download(url: str, output_path: str, on_progress=None, on_meta=None) -> str:
         raise WechatLoginRequired(f"登录态可能已失效，请重跑 python wechat_login.py 扫码后重试（接口返回：{info['error']}）")
     if not info["video_url"]:
         # 回退：登录用户自己的内容在 finder-preview 不给流（网页播放未开放），
-        # 但工作台 post_list 有明文直链——用 dynamicExportId 匹配自己的内容。
-        # 链接本身是 objectId 形态（export 前缀 / UzFf 开头）时直接作匹配键
-        dyn = info.get("dynamic_export_id")
-        if not dyn and (short_uri.startswith("export/") or short_uri.startswith("UzFf")):
-            dyn = short_uri
+        # 但工作台 post_list 有明文直链——按发布时间戳匹配自己的内容
         own_media = None
-        if dyn:
+        if info.get("createtime"):
             try:
-                own_media = _find_own_media(dyn, _build_session())
+                own_media = _find_own_media(info["createtime"], _build_session())
             except Exception:
                 own_media = None
         if not own_media or not own_media.get("url"):
