@@ -9,6 +9,18 @@ import urllib.parse
 import yt_dlp
 from video_downloader.config import (RESOLUTION_FORMATS, DEFAULT_RESOLUTION, DEFAULT_OUTPUT_DIR, DEFAULT_PROXY, SITE_PROXY_MAP, TARGET_SITE_DOMAIN)
 from video_downloader import bilibili
+from video_downloader import wechat
+
+
+def _is_pause_requested(e: Exception) -> bool:
+    """判断异常是否为 worker 的暂停信号（worker._PauseRequested，模块私有，不 import）。
+
+    暂停异常从 on_progress 回调栈里抛出、穿过 wechat 分支的 try/except。
+    若在这里被 except Exception 转成 RuntimeError，worker 的
+    `except _PauseRequested`（worker.py）将匹配不上，暂停会被误标为失败。
+    故任何异常转换前必须先放行它。
+    """
+    return type(e).__name__ == "_PauseRequested"
 
 
 def _get_proxy_for_url(url: str, user_proxy: str = None) -> str:
@@ -300,6 +312,14 @@ def prefetch_meta(url: str, proxy: str = None, on_meta=None):
             pass
         return
 
+    # 微信视频号：专用 feed API（curl_cffi + 浏览器登录 cookies）
+    if wechat._is_wechat_url(url):
+        try:
+            wechat.prefetch_meta(url, on_meta=on_meta)
+        except Exception:
+            pass
+        return
+
     # 目标站点：从页面提取标题，再探测 m3u8 拿时长/总大小
     if _is_target_site_url(url):
         try:
@@ -359,6 +379,37 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
             return title
         except Exception as e:
             raise RuntimeError(f"B站下载失败：{e}")
+
+    # 微信视频号：feed API 取流 + ISAAC64 解密（curl_cffi + 浏览器登录 cookies）
+    if wechat._is_wechat_url(url):
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, "video.mp4")
+        print("\n正在下载: 微信视频号")
+        try:
+            title = wechat.download(
+                url,
+                output_path=out_path,
+                on_progress=on_progress,
+                on_meta=on_meta,
+            )
+            if title:
+                new_path = os.path.join(
+                    output_dir, f"{re.sub(r'[<>:\"/\\\\|?*]', '_', title)}.mp4")
+                if new_path != out_path:
+                    os.replace(out_path, new_path)
+                    out_path = new_path
+            # 下载完成后用真实文件大小覆盖前期估算
+            if on_meta and os.path.exists(out_path):
+                on_meta(filesize=os.path.getsize(out_path))
+            return title
+        except Exception as e:
+            # 暂停信号原样穿透，绝不能转成 RuntimeError（见 _is_pause_requested）
+            if _is_pause_requested(e):
+                raise
+            if isinstance(e, wechat.WechatLoginRequired):
+                # 登录类错误不重试无意义，但沿用全局重试机制（3 次后进 failed 态显示提示）
+                raise RuntimeError(str(e))
+            raise RuntimeError(f"微信视频号下载失败：{e}")
 
     if _is_target_site_url(url):
         title, video_url = _extract_site_video_url(url, effective_proxy)
