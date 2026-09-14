@@ -34,3 +34,6 @@ SERVER_PORT = 5000                 # 被占用时自动递增到 5001、5002...
 # ---- 微信视频号（wechat channels）配置 ----
 WECHAT_COOKIE_BROWSER = "chrome"  # browser_cookie3 读取哪个浏览器的登录态
 WECHAT_FEED_API_URL = "https://channels.weixin.qq.com/finder-preview/api/feed/get_feed_info"
+
+# 微信视频号/公众号扫码登录态目录（wechat_login.py 生成，含敏感 cookies，已 gitignore）
+WECHAT_PROFILE_DIR = "profile_browser"

@@ -9,7 +9,7 @@ import urllib.parse
 import yt_dlp
 from video_downloader.config import (RESOLUTION_FORMATS, DEFAULT_RESOLUTION, DEFAULT_OUTPUT_DIR, DEFAULT_PROXY, SITE_PROXY_MAP, TARGET_SITE_DOMAIN)
 from video_downloader import bilibili
-from video_downloader import wechat
+from video_downloader import mp_article, wechat
 
 
 def _is_pause_requested(e: Exception) -> bool:
@@ -412,6 +412,23 @@ def download(url: str, resolution: str = DEFAULT_RESOLUTION, output_dir: str = D
                 # 登录类错误不重试无意义，但沿用全局重试机制（3 次后进 failed 态显示提示）
                 raise RuntimeError(str(e))
             raise RuntimeError(f"微信视频号下载失败：{e}")
+
+
+    # 公众号文章：内嵌 wxv 视频走 Playwright 劫持下载（签名 URL 绑定浏览器会话）
+    if mp_article._is_mp_article_url(url):
+        os.makedirs(output_dir, exist_ok=True)
+        print("\n正在下载: 公众号文章视频")
+        try:
+            files = mp_article.download(url, output_dir, on_progress=on_progress, on_meta=on_meta)
+            title = os.path.basename(files[0]).rsplit(".", 1)[0] if len(files) == 1 else "公众号文章视频"
+            if on_meta and len(files) == 1:
+                on_meta(title=title)
+            return title
+        except Exception as e:
+            # 暂停信号原样穿透（劫持下载无可中断的流式进度，保险起见仍按统一约定处理）
+            if _is_pause_requested(e):
+                raise
+            raise RuntimeError(f"公众号文章视频下载失败：{e}")
 
     if _is_target_site_url(url):
         title, video_url = _extract_site_video_url(url, effective_proxy)

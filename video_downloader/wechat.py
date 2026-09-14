@@ -20,7 +20,7 @@ from pathlib import Path
 
 from curl_cffi import requests as cffi_requests
 
-from video_downloader.config import WECHAT_FEED_API_URL, WECHAT_COOKIE_BROWSER
+from video_downloader.config import WECHAT_FEED_API_URL, WECHAT_COOKIE_BROWSER, WECHAT_PROFILE_DIR
 from video_downloader.wechat_decrypt import DEFAULT_ENC_LEN, decrypt_data
 
 
@@ -68,7 +68,9 @@ def _load_profile_cookies() -> dict[str, str]:
     （实测 RequiresAdminError/Unable to get key），因此主路线是工具自带 profile。
     Playwright 以无头模式打开 profile 读取 cookies 后立即关闭，开销约 1-2 秒。
     """
-    profile = Path(__file__).resolve().parent.parent / "profile_browser"
+    profile = Path(WECHAT_PROFILE_DIR)
+    if not profile.is_absolute():
+        profile = Path(__file__).resolve().parent.parent / profile
     if not profile.is_dir():
         return {}
     try:
