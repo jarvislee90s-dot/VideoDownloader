@@ -1,10 +1,14 @@
 """微信视频号下载辅助（channels.weixin.qq.com）。
 
 取流链路（实测验证，详见 spec）：
-browser_cookie3 读 Chrome 登录 cookies → curl_cffi(impersonate='chrome')
-POST /finder-preview/api/feed/get_feed_info（body: baseReq.generalToken='' + shortUri）
-→ 响应含 h264VideoInfo.videoUrl / h265VideoInfo.videoUrl / decodeKey（加密标记）。
-接口无签名头，卡点只在登录态；401 → 提示用户扫码登录。
+wechat_login.py 扫码登录 → cookies 持久化在 profile_browser/ → 无头 Playwright 提取
+→ curl_cffi(impersonate='chrome') POST /finder-preview/api/feed/get_feed_info
+（body: baseReq.generalToken='' + shortUri）→ 响应 feedInfo.h264VideoInfo.videoUrl
+等字段 → CDN 直链下载（stodownload，Referer 同源）→ decodeKey 存在时 ISAAC64 解密。
+接口无签名头，卡点只在登录态；401 → 提示运行 wechat_login.py 扫码。
+
+实测限制：部分内容发布者关闭了网页播放，get_feed_info 对这些内容不返回视频字段
+（页面显示"可前往微信观看"），此时报"内容可能不支持网页播放"。
 
 结构对齐 bilibili.py：URL 谓词 + prefetch_meta + download(on_progress, on_meta)。
 """
@@ -51,11 +55,38 @@ class WechatLoginRequired(RuntimeError):
     """登录态缺失/失效。错误信息直接面向用户。"""
 
 
-_LOGIN_HINT = "未检测到 Chrome 登录态，请先用 Chrome 打开 channels.weixin.qq.com 扫码登录，然后点重试"
+_LOGIN_HINT = (
+    "未检测到视频号登录态。请在本项目目录运行 python wechat_login.py，"
+    "用微信扫码登录一次（登录状态会保存，之后无需再扫），然后点重试"
+)
+
+
+def _load_profile_cookies() -> dict[str, str]:
+    """从 wechat_login.py 扫码落盘的专用 profile 提取登录 cookies。
+
+    Chrome/Edge 新版启用 App-Bound Encryption，browser_cookie3 即使提权也无法解密
+    （实测 RequiresAdminError/Unable to get key），因此主路线是工具自带 profile。
+    Playwright 以无头模式打开 profile 读取 cookies 后立即关闭，开销约 1-2 秒。
+    """
+    profile = Path(__file__).resolve().parent.parent / "profile_browser"
+    if not profile.is_dir():
+        return {}
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            ctx = p.chromium.launch_persistent_context(str(profile), headless=True)
+            try:
+                cookies = ctx.cookies("https://channels.weixin.qq.com")
+            finally:
+                ctx.close()
+        return {c["name"]: c["value"] for c in cookies if c.get("value")}
+    except Exception:
+        return {}
 
 
 def _load_browser_cookies(browser: str, domains: tuple[str, ...]) -> dict[str, str]:
-    """从浏览器读取指定域 cookies（结构对齐 bilibili._load_browser_cookies）。"""
+    """从系统浏览器读取指定域 cookies（fallback：profile 缺失时尝试）。"""
     try:
         import browser_cookie3
     except ImportError:
@@ -80,10 +111,15 @@ def _load_browser_cookies(browser: str, domains: tuple[str, ...]) -> dict[str, s
 
 
 def _build_session() -> cffi_requests.Session:
-    """带登录 cookies 的 chrome 指纹会话。cookies 为空时抛 WechatLoginRequired。"""
-    cookies = _load_browser_cookies(
-        WECHAT_COOKIE_BROWSER, (".weixin.qq.com", ".qq.com")
-    )
+    """带登录 cookies 的 chrome 指纹会话。cookies 为空时抛 WechatLoginRequired。
+
+    cookie 来源优先级：wechat_login.py 扫码 profile > 系统浏览器（browser_cookie3）。
+    """
+    cookies = _load_profile_cookies()
+    if not cookies:
+        cookies = _load_browser_cookies(
+            WECHAT_COOKIE_BROWSER, (".weixin.qq.com", ".qq.com")
+        )
     if not cookies:
         raise WechatLoginRequired(_LOGIN_HINT)
     s = cffi_requests.Session(impersonate="chrome")
@@ -102,7 +138,12 @@ def _get_feed_info(short_uri: str) -> dict:
         json={"baseReq": {"generalToken": ""}, "shortUri": short_uri},
         headers={
             "Content-Type": "application/json",
+            "Origin": "https://channels.weixin.qq.com",
             "Referer": "https://channels.weixin.qq.com/finder-preview/pages/sph",
+            # 缺 Sec-Fetch-* 头会被风控判为非浏览器请求（实测 401）
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
         },
         timeout=30,
     )
@@ -248,9 +289,12 @@ def download(url: str, output_path: str, on_progress=None, on_meta=None,
     raw = _get_feed_info(short_uri)
     info = _parse_feed_response(raw)
     if info["error"]:
-        raise WechatLoginRequired(f"请先在 Chrome 扫码登录视频号网页版后重试（接口返回：{info['error']}）")
+        raise WechatLoginRequired(f"登录态可能已失效，请重跑 python wechat_login.py 扫码后重试（接口返回：{info['error']}）")
     if not info["video_url"]:
-        raise RuntimeError("该内容可能是图片/图文类型，暂不支持下载")
+        raise RuntimeError(
+            "该内容未提供网页播放地址：可能是图片/图文类型，或发布者限制了仅微信内观看"
+            "（网页端提示'可前往微信观看'）。此类内容暂无法通过网页端下载"
+        )
     if on_meta:
         on_meta(title=info["title"], duration=info["duration"], filesize=info["filesize"])
 
