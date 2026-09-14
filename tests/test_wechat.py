@@ -2,6 +2,7 @@
 import pytest
 
 from video_downloader.wechat import _is_wechat_url, _extract_short_uri
+from video_downloader.wechat import _parse_feed_response
 
 
 class TestIsWechatUrl:
@@ -40,3 +41,78 @@ class TestExtractShortUri:
 
     def test_unparseable_returns_none(self):
         assert _extract_short_uri("https://channels.weixin.qq.com/") is None
+
+
+def _feed_json(**overrides):
+    """构造标准 feed 响应样本，允许字段覆盖。"""
+    feed_info = {
+        "description": "测试视频标题",
+        "durationMs": 65000,
+        "fileSize": 1048576,
+        "decodeKey": "",
+        "h264VideoInfo": {"videoUrl": "https://cdn.example.com/h264.m3u8?v=1"},
+        "h265VideoInfo": {"videoUrl": "https://cdn.example.com/h265.m3u8?v=1"},
+    }
+    feed_info.update(overrides.pop("feed_info", {}))
+    payload = {
+        "errCode": 0,
+        "errMsg": "ok",
+        "data": {
+            "feedInfo": feed_info,
+            "authorInfo": {"nickname": "测试作者"},
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestParseFeedResponse:
+    def test_ok_response(self):
+        r = _parse_feed_response(_feed_json())
+        assert r["title"] == "测试视频标题"
+        assert r["duration"] == 65.0  # durationMs → 秒
+        assert r["filesize"] == 1048576
+        assert r["video_url"] == "https://cdn.example.com/h264.m3u8?v=1"
+        assert r["decode_key"] == ""
+        assert r["author"] == "测试作者"
+
+    def test_h264_preferred_over_h265(self):
+        r = _parse_feed_response(_feed_json())
+        assert "h264" in r["video_url"]
+
+    def test_fallback_to_plain_video_url(self):
+        sample = _feed_json(feed_info={"h264VideoInfo": None, "h265VideoInfo": None,
+                                       "videoUrl": "https://cdn.example.com/plain.mp4"})
+        r = _parse_feed_response(sample)
+        assert r["video_url"] == "https://cdn.example.com/plain.mp4"
+
+    def test_fallback_to_h265(self):
+        sample = _feed_json(feed_info={"h264VideoInfo": None})
+        r = _parse_feed_response(sample)
+        assert "h265" in r["video_url"]
+
+    def test_no_video_url(self):
+        sample = _feed_json(feed_info={"h264VideoInfo": None, "h265VideoInfo": None})
+        r = _parse_feed_response(sample)
+        assert r["video_url"] is None
+
+    def test_decode_key_present(self):
+        sample = _feed_json(feed_info={"decodeKey": "123456789"})
+        r = _parse_feed_response(sample)
+        assert r["decode_key"] == "123456789"
+
+    def test_errcode_nonzero(self):
+        sample = _feed_json(errCode=-1, errMsg="permission verification failed")
+        r = _parse_feed_response(sample)
+        assert r["error"] == "permission verification failed"
+
+    def test_missing_fields_tolerated(self):
+        # 响应结构异常时不抛异常，字段为 None
+        r = _parse_feed_response({"data": {}})
+        assert r["title"] is None
+        assert r["video_url"] is None
+
+    def test_filesize_missing(self):
+        sample = _feed_json(feed_info={"fileSize": 0})
+        r = _parse_feed_response(sample)
+        assert r["filesize"] is None
