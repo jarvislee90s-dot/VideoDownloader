@@ -164,6 +164,7 @@ def _parse_feed_response(data: dict) -> dict:
     err_code = data.get("errCode")
     feed = payload.get("feedInfo") or {}
     author = payload.get("authorInfo") or {}
+    scene = payload.get("sceneInfo") or {}
 
     def _v(obj, *names):
         for n in names:
@@ -191,7 +192,71 @@ def _parse_feed_response(data: dict) -> dict:
         "decode_key": feed.get("decodeKey") or "",
         "author": author.get("nickname") or None,
         "error": error,
+        # shortUri -> objectId 映射键：登录用户自己的内容可用它去工作台匹配明文直链
+        "dynamic_export_id": scene.get("dynamicExportId") or None,
     }
+
+
+_WORKSPACE_POST_LIST_URL = (
+    "https://channels.weixin.qq.com/cgi-bin/mmfinderassistant-bin/post/post_list"
+)
+
+
+def _workspace_headers() -> dict:
+    return {
+        "Content-Type": "application/json",
+        "Origin": "https://channels.weixin.qq.com",
+        "Referer": "https://channels.weixin.qq.com/platform",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    }
+
+
+def _find_own_media(dynamic_export_id: str, s: cffi_requests.Session,
+                    max_pages: int = 10) -> dict | None:
+    """在工作台 post_list 里按 dynamicExportId 匹配自己的内容，返回 media dict。
+
+    微信网页端 finder-preview 接口对多数内容不返回视频字段（仅微信内观看限制），
+    但登录用户自己发布的内容在工作台直接给明文 CDN 地址。翻页上限防死循环。
+    """
+    page = 1
+    while page <= max_pages:
+        resp = s.post(
+            _WORKSPACE_POST_LIST_URL,
+            json={"orderType": 3, "pageNumber": page, "pageSize": 50},
+            headers=_workspace_headers(),
+            timeout=30,
+        )
+        if resp.status_code not in (200, 201):
+            return None
+        try:
+            items = resp.json().get("data", {}).get("list", [])
+        except ValueError:
+            return None
+        if not items:
+            return None
+        bare = dynamic_export_id.replace("export/", "")
+        for it in items:
+            oid = it.get("objectId") or ""
+            if oid == dynamic_export_id or oid == bare or oid.replace("export/", "") == bare                     or it.get("exportId") == dynamic_export_id:
+                media_list = (it.get("desc") or {}).get("media") or []
+                if media_list:
+                    m = media_list[0]
+                    def _int(v):
+                        try:
+                            return int(v)
+                        except (TypeError, ValueError):
+                            return None
+
+                    return {
+                        "url": m.get("fullUrl") or m.get("url"),
+                        "filesize": _int(m.get("fullFileSize")) or _int(m.get("fileSize")),
+                        "duration": _int(m.get("videoPlayLen")),
+                        "decode_key": m.get("decodeKey") or "",
+                    }
+        page += 1
+    return None
 
 
 def _slugify(text: str | None) -> str:
@@ -290,10 +355,30 @@ def download(url: str, output_path: str, on_progress=None, on_meta=None) -> str:
     if info["error"]:
         raise WechatLoginRequired(f"登录态可能已失效，请重跑 python wechat_login.py 扫码后重试（接口返回：{info['error']}）")
     if not info["video_url"]:
-        raise RuntimeError(
-            "该内容未提供网页播放地址：可能是图片/图文类型，或发布者限制了仅微信内观看"
-            "（网页端提示'可前往微信观看'）。此类内容暂无法通过网页端下载"
-        )
+        # 回退：登录用户自己的内容在 finder-preview 不给流（网页播放未开放），
+        # 但工作台 post_list 有明文直链——用 dynamicExportId 匹配自己的内容。
+        # 链接本身是 objectId 形态（export 前缀 / UzFf 开头）时直接作匹配键
+        dyn = info.get("dynamic_export_id")
+        if not dyn and (short_uri.startswith("export/") or short_uri.startswith("UzFf")):
+            dyn = short_uri
+        own_media = None
+        if dyn:
+            try:
+                own_media = _find_own_media(dyn, _build_session())
+            except Exception:
+                own_media = None
+        if not own_media or not own_media.get("url"):
+            raise RuntimeError(
+                "该内容未提供网页播放地址：可能是图片/图文类型，或发布者限制了仅微信内观看"
+                "（网页端提示'可前往微信观看'）。仅视频号账号本人发布的内容支持网页端下载"
+            )
+        info["video_url"] = own_media["url"]
+        if own_media.get("filesize"):
+            info["filesize"] = own_media["filesize"]
+        if own_media.get("duration"):
+            info["duration"] = own_media["duration"]
+        if own_media.get("decode_key"):
+            info["decode_key"] = own_media["decode_key"]
     if on_meta:
         on_meta(title=info["title"], duration=info["duration"], filesize=info["filesize"])
 
